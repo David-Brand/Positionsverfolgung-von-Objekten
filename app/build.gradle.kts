@@ -18,6 +18,17 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags.addAll(listOf("-frtti", "-fexceptions"))
+                abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
+
+//                arguments("-DOpenCV_DIR=${project.property("opencvsdk")}/sdk/native/jni")
+                val path = File(System.getProperty("user.home"), "Downloads/OpenCV-android-sdk").path
+                arguments("-DOpenCV_DIR=${path}/sdk/native/jni")
+            }
+        }
     }
 
     buildTypes {
@@ -30,11 +41,17 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = "17"
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     buildFeatures {
         compose = true
@@ -57,4 +74,6 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    implementation(project(":opencv"))
 }
