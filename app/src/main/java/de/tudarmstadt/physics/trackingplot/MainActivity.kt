@@ -151,12 +151,13 @@ fun OpenCvCameraScreen(
     AndroidView(
         modifier = modifier.fillMaxSize(),
         factory = { ctx ->
-            JavaCameraView(ctx, -1).apply {  // 0 = back camera, -1 = any
+            JavaCameraView(ctx, CameraBridgeViewBase.CAMERA_ID_BACK).apply {  // 0 = back camera, -1 = any
                 // Important: make sure it's visible
                 visibility = SurfaceView.VISIBLE
 
                 // You can also set other properties here:
                 // setCameraIndex(CameraBridgeViewBase.CAMERA_ID_BACK)
+                setCameraIndex(CameraBridgeViewBase.CAMERA_ID_BACK)
                 // setMaxFrameSize(1280, 720)
                 // ...
 

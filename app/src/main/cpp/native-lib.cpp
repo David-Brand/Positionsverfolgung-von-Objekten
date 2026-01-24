@@ -77,9 +77,10 @@ Java_de_tudarmstadt_physics_trackingplot_MainActivity_highlightRedDot(
 
 // Red color ranges in HSV (two ranges because red wraps around)
     Mat mask1, mask2, mask;
-    inRange(hsv, Scalar(0,   120, 70),  Scalar(10,  255, 255), mask1);   // Lower red
-    inRange(hsv, Scalar(165, 120, 70),  Scalar(180, 255, 255), mask2);   // Upper red
-    bitwise_or(mask1, mask2, mask);
+//    inRange(hsv, Scalar(0,   120, 70),  Scalar(10,  255, 255), mask1);   // Lower red
+//    inRange(hsv, Scalar(165, 120, 70),  Scalar(180, 255, 255), mask2);   // Upper red
+//    bitwise_or(mask1, mask2, mask);
+    inRange(hsv, Scalar(35, 120, 70), Scalar(85, 255, 255), mask);
 
     // Clean up the mask - very important for stable detection
     Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
@@ -115,7 +116,7 @@ Java_de_tudarmstadt_physics_trackingplot_MainActivity_highlightRedDot(
             bounding.y += roi.y;
 
             // Draw the bounding box on the original frame (green, thickness 2)
-            rectangle(frame, bounding, Scalar(0, 255, 0, 255), 2);
+            rectangle(frame, bounding, Scalar(255, 0, 0, 255), 2);
         }
     }
 }
