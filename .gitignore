@@ -8,6 +8,9 @@
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 /.idea/deploymentTargetSelector.xml
+/.idea/deviceManager.xml
+/.idea/inspectionProfiles/Project_Default.xml
+/.kotlin/errors
 .DS_Store
 /build
 /captures
