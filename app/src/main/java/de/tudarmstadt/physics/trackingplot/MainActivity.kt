@@ -14,10 +14,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import de.tudarmstadt.physics.trackingplot.ui.plotting.TimeSeriesDemo
 import de.tudarmstadt.physics.trackingplot.ui.theme.TrackingPlotTheme
 import org.opencv.android.CameraBridgeViewBase
 import org.opencv.android.JavaCameraView
@@ -54,24 +56,27 @@ class MainActivity : ComponentActivity(), CameraBridgeViewBase.CvCameraViewListe
 
         setContent {
             TrackingPlotTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { paddingValues ->
-                    OpenCvCameraScreen(
-                        onCameraViewCreated = { cameraView ->
-                            mOpenCvCameraView = cameraView
-                            cameraView.setCvCameraViewListener(this@MainActivity)
-
-                            // Start camera when we have permission
-                            if (hasCameraPermission()) {
-                                permissionGranted = true
-                                cameraView.setCameraPermissionGranted()
-                                cameraView.enableView()
-                            } else {
-                                requestCameraPermission()
-                            }
-                        },
-                        modifier = Modifier.padding(paddingValues)
-                    )
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    TimeSeriesDemo()
                 }
+//                Scaffold(modifier = Modifier.fillMaxSize()) { paddingValues ->
+//                    OpenCvCameraScreen(
+//                        onCameraViewCreated = { cameraView ->
+//                            mOpenCvCameraView = cameraView
+//                            cameraView.setCvCameraViewListener(this@MainActivity)
+//
+//                            // Start camera when we have permission
+//                            if (hasCameraPermission()) {
+//                                permissionGranted = true
+//                                cameraView.setCameraPermissionGranted()
+//                                cameraView.enableView()
+//                            } else {
+//                                requestCameraPermission()
+//                            }
+//                        },
+//                        modifier = Modifier.padding(paddingValues)
+//                    )
+//                }
             }
         }
 
