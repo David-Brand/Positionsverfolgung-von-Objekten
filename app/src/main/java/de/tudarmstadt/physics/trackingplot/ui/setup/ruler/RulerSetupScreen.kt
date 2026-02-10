@@ -40,7 +40,8 @@ fun RulerSetupScreen(
      */
 
     // Hier halten wir das Request, sobald die Kamera bereit ist
-    var surfaceRequest by remember { mutableStateOf<SurfaceRequest?>(null) }
+    val surfaceRequestState = remember { mutableStateOf<SurfaceRequest?>(null) }
+    var surfaceRequest = surfaceRequestState.value // Das aktuelle Objekt
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -54,7 +55,7 @@ fun RulerSetupScreen(
             // Preview konfigurieren
             val preview = Preview.Builder().build()
             preview.setSurfaceProvider { request ->
-                surfaceRequest = request
+                surfaceRequestState.value = request
             }
 
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -76,10 +77,10 @@ fun RulerSetupScreen(
 
         // 1. Die Kamera-Komponente aufrufen
         // Das 'let' sorgt dafür, dass 'it' innerhalb des Blocks ein
-        // garantiertes SurfaceRequest (nicht null) ist.
-        surfaceRequest?.let { nonNullRequest ->
+        // garantiert SurfaceRequest (nicht null) ist.
+        surfaceRequestState.value?.let { nonNullRequest ->
             CameraWithMarkersRuler(
-                surfaceRequest = nonNullRequest, // Jetzt passt der Typ!
+                surfaceRequest = nonNullRequest,
                 viewModel = setupViewModel,
                 onDone = { imageCoords ->
                     setupViewModel.storeExperimentSetupAndStart()

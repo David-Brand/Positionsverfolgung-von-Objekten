@@ -37,7 +37,7 @@ import kotlin.math.roundToInt
 
 @Composable
 fun CameraWithMarkersRuler(
-    surfaceRequest: SurfaceRequest?,
+    surfaceRequest: SurfaceRequest,
     onDone: (List<Offset>) -> Unit,
     viewModel: SetupViewModel
 ) {
