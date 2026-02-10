@@ -19,7 +19,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -33,16 +32,19 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import de.tudarmstadt.physics.trackingplot.ui.setup.SetupViewModel
 import kotlin.math.roundToInt
 
 @Composable
 fun CameraWithMarkersRuler(
-    surfaceRequest: SurfaceRequest,
-    onDone: (List<Offset>) -> Unit
+    surfaceRequest: SurfaceRequest?,
+    onDone: (List<Offset>) -> Unit,
+    viewModel: SetupViewModel
 ) {
-    val points = remember { mutableStateListOf<Offset>() }  // max 2
+    //val points = remember { mutableStateListOf<Offset>() }  // max 2
     val transformer = remember { MutableCoordinateTransformer() }
     var draggedIndex by remember { mutableStateOf(-1) }
+
 
     Box(Modifier.fillMaxSize()) {
 
@@ -66,8 +68,10 @@ fun CameraWithMarkersRuler(
                 .pointerInput(Unit) {
                     detectTapGestures { tapOffset ->
                         println("Tap detected at $tapOffset")
-                        if (points.size < 2) {
-                            points.add(tapOffset)
+                        if (viewModel.uiPoints.size < 2) {
+                            val normX = tapOffset.x / size.width
+                            val normY = tapOffset.y / size.height
+                            viewModel.addPoint(tapOffset, Pair(normX, normY))
                         }
                     }
                 }
@@ -75,7 +79,7 @@ fun CameraWithMarkersRuler(
                     detectDragGestures(
                         onDragStart = { startOffset ->
                             println("Drag START at $startOffset")
-                            val closestIndex = points.indexOfFirst { pt ->
+                            val closestIndex = viewModel.uiPoints.indexOfFirst { pt ->
                                 (pt - startOffset).getDistance() < 60.dp.toPx()  // hit area
                             }
                             draggedIndex = closestIndex
@@ -84,13 +88,13 @@ fun CameraWithMarkersRuler(
                             change.consume()  // important
                             println("Drag delta: $dragAmount")
 
-                            if (draggedIndex in points.indices) {
-                                val old = points[draggedIndex]
+                            if (draggedIndex in viewModel.uiPoints.indices) {
+                                val old = viewModel.uiPoints[draggedIndex]
                                 var newX = old.x + dragAmount.x
                                 var newY = old.y + dragAmount.y
                                 newX = newX.coerceIn(0f, size.width.toFloat())
                                 newY = newY.coerceIn(0f, size.height.toFloat())
-                                points[draggedIndex] = Offset(newX, newY)
+                                viewModel.updatePoint(draggedIndex, Offset(newX, newY))
                             }
                         },
                         onDragEnd = {
@@ -104,10 +108,10 @@ fun CameraWithMarkersRuler(
                 }
         ) {
             // Draw line between points (when we have exactly 2)
-            if (points.size == 2) {
+            if (viewModel.uiPoints.size == 2) {
                 Canvas(modifier = Modifier.matchParentSize()) {
-                    val p1 = points[0]
-                    val p2 = points[1]
+                    val p1 = viewModel.uiPoints[0]
+                    val p2 = viewModel.uiPoints[1]
                     drawLine(
                         color = Color.Cyan.copy(alpha = 0.9f),
                         start = p1,
@@ -119,7 +123,7 @@ fun CameraWithMarkersRuler(
             }
 
             // 3. Draw your centered dots here (same as before)
-            points.forEachIndexed { index, center ->
+            viewModel.uiPoints.forEachIndexed { index, center ->
                 val isDragged = index == draggedIndex
                 Box(
                     modifier = Modifier
@@ -162,10 +166,10 @@ fun CameraWithMarkersRuler(
         }
 
         // Done button (only show when 2 points ready)
-        if (points.size == 2) {
+        if (viewModel.uiPoints.size == 2) {
             Button(
                 onClick = {
-                    val imageCoords = points.map { ui ->
+                    val imageCoords = viewModel.uiPoints.map { ui ->
                         with(transformer) { ui.transform() }
                     }
                     onDone(imageCoords)

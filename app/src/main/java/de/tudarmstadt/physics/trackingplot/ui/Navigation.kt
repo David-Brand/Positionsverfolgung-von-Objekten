@@ -270,6 +270,7 @@ fun AppNavigation() {
                     }
                 )
             )
+            //bis Z408: points ins view model, punkte in canvas, punkte normalisieren. 383-397//bis Z408: points ins view model, punkte in canvas, punkte normalisieren. 383-397
             val context = LocalContext.current
             val lifecycleOwner = LocalLifecycleOwner.current
             val selector = CameraSelector.DEFAULT_BACK_CAMERA
