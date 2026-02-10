@@ -75,14 +75,17 @@ fun RulerSetupScreen(
     Box(modifier = Modifier.fillMaxSize()) {
 
         // 1. Die Kamera-Komponente aufrufen
-        CameraWithMarkersRuler(
-            surfaceRequest = surfaceRequest,
-            viewModel = setupViewModel,
-            onDone = { imageCoords ->
-                // Wenn der User fertig ist, rufen wir die Speicher-Logik im VM auf
-                setupViewModel.storeExperimentSetupAndStart()
-            }
-        )
+        // Das 'let' sorgt dafür, dass 'it' innerhalb des Blocks ein
+        // garantiertes SurfaceRequest (nicht null) ist.
+        surfaceRequest?.let { nonNullRequest ->
+            CameraWithMarkersRuler(
+                surfaceRequest = nonNullRequest, // Jetzt passt der Typ!
+                viewModel = setupViewModel,
+                onDone = { imageCoords ->
+                    setupViewModel.storeExperimentSetupAndStart()
+                }
+            )
+        }
 
         // 2. Zusätzlicher Canvas (falls du außerhalb noch was zeichnen willst)
         Canvas(modifier = Modifier.fillMaxSize()) {
