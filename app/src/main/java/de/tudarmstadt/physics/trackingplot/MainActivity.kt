@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import de.tudarmstadt.physics.trackingplot.ui.AppNavigation
 import de.tudarmstadt.physics.trackingplot.ui.MainScreen
 import de.tudarmstadt.physics.trackingplot.ui.theme.TrackingPlotTheme
 import org.opencv.android.CameraBridgeViewBase
@@ -53,7 +54,8 @@ class MainActivity : ComponentActivity(), CameraBridgeViewBase.CvCameraViewListe
 
         setContent {
             TrackingPlotTheme {
-                MainScreen()
+//                MainScreen()
+                AppNavigation()
 //                Surface(modifier = Modifier.fillMaxSize()) {
 //                    TimeSeriesDemo()
 //                }

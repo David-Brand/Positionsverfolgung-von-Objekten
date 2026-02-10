@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">TrackingPlot</string>
+
+    <string name="abort_experiment">Abort Experiment?</string>
 </resources>

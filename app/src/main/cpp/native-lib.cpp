@@ -85,6 +85,52 @@ Java_de_tudarmstadt_physics_trackingplot_tracking_NativeTracker_processFrame(
 
 
 
+extern "C"
+JNIEXPORT jintArray JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracking_NativeTracker_detectEdges(
+        JNIEnv* env,
+        jobject,
+        jobject yBuf,
+        jobject uBuf,
+        jobject vBuf,
+        jint width,
+        jint height,
+        jint yStride,
+        jint uvStride,
+        jint uvPixelStride
+) {
+    uint8_t* y = (uint8_t*)env->GetDirectBufferAddress(yBuf);
+    uint8_t* u = (uint8_t*)env->GetDirectBufferAddress(uBuf);
+    uint8_t* v = (uint8_t*)env->GetDirectBufferAddress(vBuf);
+
+    cv::Mat yMat(height, width, CV_8UC1, y, yStride);
+    cv::Mat uvMat(height / 2, width / 2, CV_8UC2);
+
+    for (int i = 0; i < height / 2; i++) {
+        for (int j = 0; j < width / 2; j++) {
+            uvMat.at<cv::Vec2b>(i, j)[0] = u[i * uvStride + j * uvPixelStride];
+            uvMat.at<cv::Vec2b>(i, j)[1] = v[i * uvStride + j * uvPixelStride];
+        }
+    }
+
+    cv::Mat rgb;
+    cv::cvtColorTwoPlane(yMat, uvMat, rgb, cv::COLOR_YUV2RGB);
+
+    // ---- OpenCV processing ----
+    cv::Mat gray, edges;
+    cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+    cv::Canny(gray, edges, 80, 160);
+
+    cv::Rect bbox = cv::boundingRect(edges);
+
+    jintArray out = env->NewIntArray(4);
+    jint data[4] = { bbox.x, bbox.y, bbox.width, bbox.height };
+    env->SetIntArrayRegion(out, 0, 4, data);
+
+    return out;
+}
+
+
 
 
 ////#include <string>

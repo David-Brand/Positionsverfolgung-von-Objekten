@@ -1,5 +1,7 @@
 package de.tudarmstadt.physics.trackingplot.tracking
 
+import java.nio.ByteBuffer
+
 object NativeTracker {
 
     init {
@@ -11,4 +13,15 @@ object NativeTracker {
         width: Int,
         height: Int
     ): FloatArray?
+
+    external fun detectEdges(
+        y: ByteBuffer,
+        u: ByteBuffer,
+        v: ByteBuffer,
+        width: Int,
+        height: Int,
+        yStride: Int,
+        uvStride: Int,
+        uvPixelStride: Int
+    ): IntArray
 }
