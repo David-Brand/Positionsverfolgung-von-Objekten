@@ -89,6 +89,8 @@ dependencies {
     implementation("androidx.camera:camera-compose:1.5.2")
     implementation("androidx.camera:camera-view:1.5.2")
 
+    implementation(libs.androidx.compose.foundation)
+
     implementation(libs.mpandroidchart)
 
     implementation(project(":opencv"))

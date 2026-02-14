@@ -1,6 +1,195 @@
 #include <jni.h>
 
 
+#include "TrackerManager.hpp"
+
+static TrackerManager gTrackerManager;
+
+cv::Scalar rgbToHsv(int r, int g, int b);
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_addTracker(
+//Java_com_example_tracker_NativeTracker_addTracker(
+        JNIEnv* env,
+        jobject,
+//        jint h, jint s, jint v,
+        jint r, jint g, jint b,
+        jint tolerance) {
+
+    cv::Scalar hsv = rgbToHsv(r, g, b);
+//    cv::Scalar hsv(h, s, v);
+    return gTrackerManager.addTracker(hsv, tolerance);
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_updateTrackers(
+        JNIEnv* env,
+        jobject,
+        jlong matAddr,
+        jint roiX,
+        jint roiY,
+        jint roiWidth,
+        jint roiHeight) {
+
+    cv::Mat& frame = *(cv::Mat*)matAddr;
+
+//    auto results = gTrackerManager.updateAll(frame);
+    std::vector<TrackerResult> results;
+
+    if (roiWidth > 0 && roiHeight > 0) {
+        cv::Rect roi(roiX, roiY, roiWidth, roiHeight);
+        results = gTrackerManager.updateAll(frame, &roi);
+    } else {
+        results = gTrackerManager.updateAll(frame, nullptr);
+    }
+
+    jclass resultClass = env->FindClass("de/tudarmstadt/physics/trackingplot/tracker2/TrackerResult");
+    jobjectArray array = env->NewObjectArray(
+            results.size(),
+            resultClass,
+            nullptr
+    );
+
+    jmethodID constructor = env->GetMethodID(
+            resultClass,
+            "<init>",
+            "(IIIII)V"
+    );
+
+    for (size_t i = 0; i < results.size(); i++) {
+        const auto& r = results[i];
+
+        jobject obj = env->NewObject(
+                resultClass,
+                constructor,
+                r.trackerId,
+                r.boundingBox.x,
+                r.boundingBox.y,
+                r.boundingBox.width,
+                r.boundingBox.height
+        );
+
+        env->SetObjectArrayElement(array, i, obj);
+    }
+
+    return array;
+}
+
+cv::Scalar rgbToHsv(int r, int g, int b) {
+
+    cv::Mat bgr(1, 1, CV_8UC3, cv::Scalar(b, g, r));
+    cv::Mat hsv;
+
+    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Vec3b pixel = hsv.at<cv::Vec3b>(0, 0);
+
+    return cv::Scalar(pixel[0], pixel[1], pixel[2]);
+}
+
+
+
+
+
+
+
+//#include <jni.h>
+//#include "TrackerManager.hpp"
+//
+//static TrackerManager* manager = nullptr;
+//
+//extern "C"
+//JNIEXPORT void JNICALL
+//Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeInit(
+//        JNIEnv* env,
+//        jobject,
+//        jlong matAddr,
+//        jobjectArray configs,
+//        jdoubleArray lowerHSVArr,
+//        jdoubleArray upperHSVArr) {
+//
+//    if (manager == nullptr)
+//        manager = new TrackerManager();
+//
+//    cv::Mat& frame = *(cv::Mat*)matAddr;
+//
+//    int count = env->GetArrayLength(configs);
+//    std::vector<TrackerConfig> nativeConfigs;
+//
+//    for (int i = 0; i < count; i++) {
+//
+//        jobject obj = env->GetObjectArrayElement(configs, i);
+//        jclass cls = env->GetObjectClass(obj);
+//
+//        TrackerConfig cfg;
+//
+//        cfg.id = env->GetIntField(obj,
+//                env->GetFieldID(cls, "id", "I"));
+//
+//        double x = env->GetDoubleField(obj,
+//                env->GetFieldID(cls, "x", "D"));
+//        double y = env->GetDoubleField(obj,
+//                env->GetFieldID(cls, "y", "D"));
+//        double w = env->GetDoubleField(obj,
+//                env->GetFieldID(cls, "width", "D"));
+//        double h = env->GetDoubleField(obj,
+//                env->GetFieldID(cls, "height", "D"));
+//
+//        cfg.initialBox = cv::Rect2d(x, y, w, h);
+//        cfg.hasConstraint = false;
+//
+//        nativeConfigs.push_back(cfg);
+//    }
+//
+//    jdouble* lowerPtr = env->GetDoubleArrayElements(lowerHSVArr, nullptr);
+//    jdouble* upperPtr = env->GetDoubleArrayElements(upperHSVArr, nullptr);
+//
+//    cv::Scalar lower(lowerPtr[0], lowerPtr[1], lowerPtr[2]);
+//    cv::Scalar upper(upperPtr[0], upperPtr[1], upperPtr[2]);
+//
+//    env->ReleaseDoubleArrayElements(lowerHSVArr, lowerPtr, 0);
+//    env->ReleaseDoubleArrayElements(upperHSVArr, upperPtr, 0);
+//
+//    manager->init(frame, nativeConfigs, lower, upper);
+//}
+//
+//extern "C"
+//JNIEXPORT jobjectArray JNICALL
+//Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeUpdate(
+//        JNIEnv* env,
+//        jobject,
+//        jlong matAddr) {
+//
+//    cv::Mat& frame = *(cv::Mat*)matAddr;
+//    auto results = manager->update(frame);
+//
+//    jclass cls = env->FindClass("de/tudarmstadt/physics/trackingplot/tracker/TrackerResult");
+//    jobjectArray arr =
+//            env->NewObjectArray(results.size(), cls, nullptr);
+//
+//    jmethodID ctor =
+//            env->GetMethodID(cls, "<init>", "(IDDDDZ)V");
+//
+//    for (int i = 0; i < results.size(); i++) {
+//        auto& r = results[i];
+//
+//        jobject obj = env->NewObject(
+//                cls, ctor,
+//                r.id,
+//                r.box.x,
+//                r.box.y,
+//                r.box.width,
+//                r.box.height,
+//                r.valid);
+//
+//        env->SetObjectArrayElement(arr, i, obj);
+//    }
+//
+//    return arr;
+//}
+
 
 
 #include <opencv2/opencv.hpp>
@@ -172,7 +361,7 @@ Java_de_tudarmstadt_physics_trackingplot_tracking_NativeTracker_detectEdges(
 //    __android_log_print(ANDROID_LOG_INFO, TAG, "adaptiveThreshold computation time = %f seconds\n",
 //            totalTime);
 //}
-//
+
 //void JNICALL
 //Java_de_tudarmstadt_physics_trackingplot_MainActivity_highlightRedDot(
 //    JNIEnv *env,

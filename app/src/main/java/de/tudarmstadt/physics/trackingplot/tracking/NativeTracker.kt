@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 object NativeTracker {
 
     init {
-        System.loadLibrary("native-lib")
+//        System.loadLibrary("native-lib")
     }
 
     external fun processFrame(

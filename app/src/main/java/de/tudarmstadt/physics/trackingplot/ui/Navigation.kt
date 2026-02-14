@@ -1,11 +1,14 @@
 package de.tudarmstadt.physics.trackingplot.ui
 
+import android.util.Rational
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
+import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.camera.viewfinder.compose.MutableCoordinateTransformer
@@ -50,6 +53,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
+import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
 import de.tudarmstadt.physics.trackingplot.tracking.CameraAnalyzer
 import de.tudarmstadt.physics.trackingplot.ui.experiments_overview.ExperimentsOverviewScreen
 import de.tudarmstadt.physics.trackingplot.ui.experiments_overview.ExperimentsOverviewViewModel
@@ -222,8 +226,19 @@ fun AppNavigation() {
         navigation<SetupRoute>(startDestination = RulerSetupRoute) {
             composable<RulerSetupRoute> { entry ->
                 val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(viewModelStoreOwner = parentEntry)
+//                val setupViewModel = viewModel<SetupViewModel>(viewModelStoreOwner = parentEntry)
+                val setupViewModel = viewModel<SetupViewModel>(
+                    viewModelStoreOwner = parentEntry,
+                    factory = viewModelFactory {
+                        SetupViewModel(
+                            nativeTracker = NativeTracker()
+                        )
+                    }
+                )
                 RulerSetupScreen(
+                    toNextStep = dropUnlessStarted {
+                        navController.navigate(BoundingBoxSetupRoute)
+                    },
                     setupViewModel = setupViewModel
                 )
                 Button(
@@ -237,14 +252,34 @@ fun AppNavigation() {
             }
             composable<BoundingBoxSetupRoute> { entry ->
                 val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(viewModelStoreOwner = parentEntry)
+//                val setupViewModel = viewModel<SetupViewModel>(viewModelStoreOwner = parentEntry)
+                val setupViewModel = viewModel<SetupViewModel>(
+                    viewModelStoreOwner = parentEntry,
+                    factory = viewModelFactory {
+                        SetupViewModel(
+                            nativeTracker = NativeTracker()
+                        )
+                    }
+                )
                 BoundingBoxSetupScreen(
+                    back = dropUnlessStarted { navController.navigateUp() },
+                    toNextStep = dropUnlessStarted {
+                        navController.navigate(TrackerSetupRoute)
+                    },
+                    skip = {},
                     setupViewModel = setupViewModel
                 )
             }
             composable<TrackerSetupRoute> { entry ->
                 val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(viewModelStoreOwner = parentEntry)
+                val setupViewModel = viewModel<SetupViewModel>(
+                    viewModelStoreOwner = parentEntry,
+                    factory = viewModelFactory {
+                        SetupViewModel(
+                            nativeTracker = NativeTracker()
+                        )
+                    }
+                )
                 val lifecycleOwner = LocalLifecycleOwner.current
                 TrackerSetupScreen(
                     toLiveExperiment = { experimentId ->
@@ -344,6 +379,8 @@ fun AppNavigation() {
 
                 provider.unbindAll()
                 provider.bindToLifecycle(lifecycleOwner, selector, preview, analyzer)
+//                provider.unbindAll()
+//                provider.bindToLifecycle(lifecycleOwner, selector, )
             }
 
             surfaceRequest?.let {
