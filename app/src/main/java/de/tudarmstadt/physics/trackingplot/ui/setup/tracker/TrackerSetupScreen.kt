@@ -1,9 +1,8 @@
 package de.tudarmstadt.physics.trackingplot.ui.setup.tracker
 
-import android.graphics.ImageFormat
+import android.graphics.Paint
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -16,9 +15,7 @@ import androidx.camera.viewfinder.core.ImplementationMode
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -27,16 +24,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,34 +45,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
-import de.tudarmstadt.physics.trackingplot.tracking.yuvToRgba
 import de.tudarmstadt.physics.trackingplot.ui.ObserveAsEvents
 import de.tudarmstadt.physics.trackingplot.ui.setup.SetupViewModel
-import java.util.concurrent.Executors
-import kotlin.math.roundToInt
 
 @Composable
 fun TrackerSetupScreen(
+    back: () -> Unit,
     toLiveExperiment: (experimentId: Long) -> Unit,
     setupViewModel: SetupViewModel
 ) {
+    var showStartDialog by remember { mutableStateOf(false) }
+
     ObserveAsEvents(flow = setupViewModel.eventsChannelFlow) { event ->
         when (event) {
             is SetupViewModel.UiEvent.ToLiveExperiment -> {
@@ -80,14 +78,6 @@ fun TrackerSetupScreen(
             }
         }
     }
-
-//    Button(onClick = {
-//        setupViewModel.storeExperimentSetupAndStart()
-//    }) {
-//        Text("Start Experiment")
-//    }
-
-
 
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -102,41 +92,6 @@ fun TrackerSetupScreen(
                     .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                     .build()
             ).build()
-//        val analyzer = ImageAnalysis.Builder()
-//            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-//            .build()
-//            .apply {
-//                setAnalyzer(
-//                    Executors.newSingleThreadExecutor(),
-//                    object : ImageAnalysis.Analyzer {
-//                        override fun analyze(image: ImageProxy) {
-//                            try {
-//                                image.image?.let {
-//                                    if (it.format == ImageFormat.YUV_420_888 && it.planes.size == 3) {
-//                                        val rgbaMat = it.yuvToRgba()
-//
-//                                        val results = NativeTracker().updateTrackers(
-//                                            rgbaMat.nativeObjAddr
-//                                        )
-//                                        for (r in results) {
-//                                            println("Tracker ${r.trackerId} at ${r.x}, ${r.y}")
-//                                        }
-////                                        val results = NativeTracker.processFrame(
-////                                            rgbaMat.nativeObjAddr,
-////                                            image.width,
-////                                            image.height
-////                                        )
-//                                    }
-//                                }
-//                            } catch (e: IllegalStateException) {
-//                                e.printStackTrace()
-//                            } finally {
-//                                image.close()
-//                            }
-//                        }
-//                    }
-//                )
-//            }
         setupViewModel.imageCapture = imageCapture
         val useCaseGroup = setupViewModel.createUseCaseGroup(
             imageCapture = imageCapture,
@@ -164,34 +119,34 @@ fun TrackerSetupScreen(
             val bitmap = setupViewModel.frozenBitmap
             val isPicking = setupViewModel.isPickingColor
             if (isPicking && bitmap != null) {
-//                ColorPickerOverlay(
-//                    bitmap = bitmap,
-//                    onColorSelected = { color ->
-//                        //todo color
-//                        setupViewModel.isPickingColor = false
-//                    },
-//                    onCancel = { setupViewModel.isPickingColor = false }
-//                )
-                BitmapColorPicker(
+                ColorPickerOverlay(
                     bitmap = bitmap,
                     onColorChanged = {},
                     onColorSelected = { color ->
                         setupViewModel.isPickingColor = false
                         when (activeTrackerIndex) {
                             1 -> {
-                                NativeTracker()
-                                    .addTracker(
-                                        (color.red * 255).toInt(),
-                                        (color.green * 255).toInt(),
-                                        (color.blue * 255).toInt(),
-                                        45
-                                    )
+                                setupViewModel.trackerColorSelected(
+                                    0,
+                                    color,
+                                    45
+                                )
                                 tracker1Color = color
                             }
                             2 -> {
+                                setupViewModel.trackerColorSelected(
+                                    1,
+                                    color,
+                                    45
+                                )
                                 tracker2Color = color
                             }
                             3 -> {
+                                setupViewModel.trackerColorSelected(
+                                    2,
+                                    color,
+                                    45
+                                )
                                 tracker3Color = color
                             }
                         }
@@ -199,8 +154,24 @@ fun TrackerSetupScreen(
                     onCancel = { setupViewModel.isPickingColor = false }
                 )
             } else {
+//                Scaffold(
+//                    floatingActionButton = {
+//                        ExtendedFloatingActionButton(
+//                            text = { Text("Start Experiment") },
+//                            icon = { Icon(
+//                                painter = painterResource(id = R.drawable.baseline_timeline_24),
+//                                contentDescription = "Start Experiment"
+//                            ) },
+//                            onClick = {
+//                                setupViewModel.storeExperimentSetupAndStart()
+//                            }
+//                        )
+//                    }
+//                ) { paddingValues ->
+//                }
                 BoxWithConstraints(
                     modifier = Modifier
+//                        .padding(paddingValues)
                         .fillMaxWidth()
                         .weight(1f),
                     contentAlignment = Alignment.Center
@@ -241,17 +212,32 @@ fun TrackerSetupScreen(
 
                             boxes.forEach { box ->
 
+                                if (box.left < 0) return@forEach
+
+                                val rectTopLeft = Offset(
+                                    box.left * canvasWidth,
+                                    box.top * canvasHeight
+                                )
+                                val rectSize = Size(
+                                    (box.right - box.left) * canvasWidth,
+                                    (box.bottom - box.top) * canvasHeight
+                                )
                                 drawRect(
                                     color = Color.Red,
-                                    topLeft = Offset(
-                                        box.left * canvasWidth,
-                                        box.top * canvasHeight
-                                    ),
-                                    size = Size(
-                                        (box.right - box.left) * canvasWidth,
-                                        (box.bottom - box.top) * canvasHeight
-                                    ),
+                                    topLeft = rectTopLeft,
+                                    size = rectSize,
                                     style = Stroke(width = 4f)
+                                )
+
+                                drawContext.canvas.nativeCanvas.drawText(
+                                    box.trackerId.toString(),
+                                    rectTopLeft.x + rectSize.width + 20f,
+                                    rectTopLeft.y + rectSize.height / 2,
+                                    Paint().apply {
+                                        color = android.graphics.Color.RED
+                                        textSize = 50f
+                                        textAlign = Paint.Align.LEFT
+                                    }
                                 )
                             }
 
@@ -310,28 +296,6 @@ fun TrackerSetupScreen(
                     }
                 )
             }
-//            Button(onClick = {
-//                val executor = ContextCompat.getMainExecutor(context)
-//
-//                val imageCapture = setupViewModel.imageCapture ?: return@Button
-//
-//                imageCapture.takePicture(
-//                    executor,
-//                    object : ImageCapture.OnImageCapturedCallback() {
-//                        override fun onCaptureSuccess(image: ImageProxy) {
-//                            val bitmap = image.toBitmap2() // see helper below
-//                            setupViewModel.frozenBitmap = bitmap
-//                            setupViewModel.isPickingColor = true
-//                            image.close()
-//                        }
-//
-//                        override fun onError(exception: ImageCaptureException) {
-//                            // handle error
-//                        }
-//                    }
-//                )
-//            }) { }
-
 
             var showTracker2 by remember { mutableStateOf(false) }
             var showTracker3 by remember { mutableStateOf(false) }
@@ -431,72 +395,97 @@ fun TrackerSetupScreen(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row {
+
+                        // Back button always visible
+                        OutlinedButton(
+                            onClick = back,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Back")
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Button(onClick = {
+                            showStartDialog = true
+//                            setupViewModel.storeExperimentSetupAndStart()
+                        }) {
+                            Text("Start Experiment")
+                        }
+                    }
+                }
             }
-//            Column(
-//                modifier = Modifier.padding(horizontal = 16.dp),
-//                horizontalAlignment = Alignment.CenterHorizontally
-//            ) {
-//                Row(
-//                    modifier = Modifier.clickable(
-//                        onClick = {
-//                            if (uiPoints.size == 2) {
-//                                setupViewModel.useBoundingBox = !setupViewModel.useBoundingBox
-//                            }
-//                        }
-//                    ),
-//                    verticalAlignment = Alignment.CenterVertically
-//                ) {
-//                    Checkbox(
-//                        checked = setupViewModel.useBoundingBox,
-//                        onCheckedChange = { checked ->
-//                            if (uiPoints.size == 2) {
-//                                setupViewModel.useBoundingBox = checked
-//                            }
-//                        },
-//                        enabled = uiPoints.size == 2//hasEnoughPoints
-//                    )
-//
-//                    Spacer(modifier = Modifier.width(8.dp))
-//
-//                    Text(
-//                        text = "Use Bounding Box",
-//                        color = if (uiPoints.size == 2) Color.Unspecified else Color.Unspecified.copy(alpha = 0.5f)
-//                    )
-//                }
-//
-//                Spacer(modifier = Modifier.height(16.dp))
-//
-//                Row {
-//
-//                    // Back button always visible
-//                    OutlinedButton(
-//                        onClick = back,
-//                        modifier = Modifier.weight(1f)
-//                    ) {
-//                        Text("Back")
-//                    }
-//
-//                    Spacer(modifier = Modifier.width(12.dp))
-//
-//                    if (uiPoints.size == 2 && setupViewModel.useBoundingBox) {
-//                        Button(
-//                            onClick = {
-//                                toNextStep()
-//                            },
-//                            modifier = Modifier.weight(1f)
-//                        ) {
-//                            Text("Next")
-//                        }
-//                    } else {
-//                        OutlinedButton(
-//                            onClick = skip,
-//                            modifier = Modifier.weight(1f)
-//                        ) {
-//                            Text("Skip")
-//                        }
-//                    }
-//                }
-//            }
+        }
+    }
+
+    if (showStartDialog) {
+        Dialog(
+            onDismissRequest = { showStartDialog = false }
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                val samplingRateText = setupViewModel.samplingRateText
+                OutlinedTextField(
+                    value = samplingRateText,
+                    onValueChange = { setupViewModel.samplingRateText = it },
+                    label = { Text("Sampling rate") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(6.dp),
+                    trailingIcon = {
+                        Text("/s")
+                    }
+                )
+
+                val description = setupViewModel.description
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { setupViewModel.description = it },
+                    label = { Text("Experiment description") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(6.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth(),
+//                        .background(MaterialTheme.colorScheme.surfaceContainer),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    TextButton(
+                        onClick = { showStartDialog = false },
+                        modifier = Modifier.padding(8.dp)
+                    ) {
+                        Text(text = "Cancel")
+                    }
+                    TextButton(
+                        onClick = {
+                            setupViewModel.storeExperimentSetupAndStart()
+                        },
+                        modifier = Modifier.padding(8.dp),
+                        enabled = samplingRateText.toIntOrNull()?.let { it in 1..60 } ?: false,
+//                        colors = ButtonDefaults.textButtonColors(
+//                            contentColor = MaterialTheme.colorScheme.error
+//                        )
+                    ) {
+                        Text(text = "Start")
+                    }
+                }
+            }
         }
     }
 }

@@ -1,17 +1,12 @@
 package de.tudarmstadt.physics.trackingplot.ui.setup
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.graphics.Rect
-import android.media.Image
 import android.util.Rational
-import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraEffect
-import androidx.camera.core.CameraInfo
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
 import androidx.camera.core.UseCaseGroup
@@ -21,14 +16,21 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
-import androidx.core.content.ContextCompat
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.tudarmstadt.physics.trackingplot.DistanceUnit
+import de.tudarmstadt.physics.trackingplot.db.ExperimentDatabase
+import de.tudarmstadt.physics.trackingplot.tracker2.ColorTrackerConfig
 import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
+import de.tudarmstadt.physics.trackingplot.tracker2.Point2D
+import de.tudarmstadt.physics.trackingplot.tracker2.Roi
+import de.tudarmstadt.physics.trackingplot.tracker2.Ruler
+import de.tudarmstadt.physics.trackingplot.tracker2.TrackingConfig
+import de.tudarmstadt.physics.trackingplot.tracker2.TrackingSession
 import de.tudarmstadt.physics.trackingplot.tracking.yuvToRgba
 import de.tudarmstadt.physics.trackingplot.ui.setup.tracker.NormalizedBox
 import kotlinx.coroutines.channels.Channel
@@ -45,7 +47,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 class SetupViewModel(
-    private val nativeTracker: NativeTracker
+    private val nativeTracker: NativeTracker,
+    private val trackingSession: TrackingSession,
+    private val db: ExperimentDatabase
 ): ViewModel() {
 
     // RULER
@@ -138,7 +142,6 @@ class SetupViewModel(
         return ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build().apply {
-
                 setAnalyzer(
                     Executors.newSingleThreadExecutor()
                 ) { imageProxy ->
@@ -275,13 +278,17 @@ class SetupViewModel(
             val top = r.y.toFloat() / frameHeight
             val right = (r.x + r.width).toFloat() / frameWidth
             val bottom = (r.y + r.height).toFloat() / frameHeight
+            val centroidX = r.centroidX / frameWidth
+            val centroidY = r.centroidY / frameWidth
 
             NormalizedBox(
                 trackerId = r.trackerId,
                 left = left,
                 top = top,
                 right = right,
-                bottom = bottom
+                bottom = bottom,
+                centroidX = centroidX,
+                centroidY = centroidY
             )
         }
 
@@ -289,17 +296,110 @@ class SetupViewModel(
     }
 
 
+    override fun onCleared() {
+        super.onCleared()
+        //TODO reset NativeTracker
+    }
+
+    private val _trackers = mutableStateListOf<ColorTrackerConfig>()
+    val trackers = _trackers as List<ColorTrackerConfig>
+    fun trackerColorSelected(
+        index: Int,
+        color: Color,
+        tolerance: Int
+    ) {
+        if (_trackers.size == index) {
+            _trackers.add(ColorTrackerConfig(
+                color = color.toArgb(),
+                tolerance = tolerance.toFloat()
+            ))
+        } else {
+            _trackers[index] = ColorTrackerConfig(
+                color = color.toArgb(),
+                tolerance = tolerance.toFloat()
+            )
+        }
+        nativeTracker.setTracker(
+            index = index,
+            r = (color.red * 255).toInt(),
+            g = (color.green * 255).toInt(),
+            b = (color.blue * 255).toInt(),
+            tolerance = tolerance
+        )
+    }
+
+    var samplingRateText by mutableStateOf("10")
+    var description by mutableStateOf("")
 
 
     fun storeExperimentSetupAndStart() {
         viewModelScope.launch {
             //todo store setup
 
+            val roi = if (useBoundingBox) {
+                val points = boundingNormalizedPoints.toList()
+//            if (points.size == 2) calculateRoi(points[0], points[1], frameWidth, frameHeight)
+                if (points.size == 2) normalizedPointsToRoi(points[0], points[1])
+                else null
+            } else null
+
+            val rulerPoints = normalizedPoints.toList()
+            val realDistance = distanceText.toFloatOrNull()
+            val ruler = if (rulerPoints.size == 2 && realDistance != null) {
+                //todo
+                normalizedPointsToRuler(rulerPoints[0], rulerPoints[1], realDistance, selectedUnit)
+            } else null
+            val config = TrackingConfig(
+                roi,
+                ruler,
+                _trackers.toList()
+            )
+            val description = description
+            trackingSession.configure(config)
             //on success
-            val experimentId = 123L //todo this is returned by setup store
+//            val experimentId = 123L //todo this is returned by setup store
+
+            val experimentId = db.withTransaction(readOnly = false) {
+                val id = addExperiment(config, description)
+                id
+            }
 
             eventsChannel.send(UiEvent.ToLiveExperiment(experimentId))
         }
+    }
+
+    fun normalizedPointsToRoi(p1: Offset, p2: Offset): Roi {
+        val np1 = Offset(p1.x, p1.y)
+        val np2 = Offset(p2.x, p2.y)
+
+        // Ensure left < right, top < bottom
+        val left = min(np1.x, np2.x).coerceIn(0.0f, 1.0f)
+        val top = min(np1.y, np2.y).coerceIn(0.0f, 1.0f)
+        val right = max(np1.x, np2.x).coerceIn(0.0f, 1.0f)
+        val bottom = max(np1.y, np2.y).coerceIn(0.0f, 1.0f)
+
+        return Roi(
+            Point2D(left, top),
+            Point2D(right, bottom),
+        )
+    }
+
+    fun normalizedPointsToRuler(p1: Offset, p2: Offset, realDistance: Float, unit: DistanceUnit): Ruler {
+        val np1 = Offset(p1.x, p1.y)
+        val np2 = Offset(p2.x, p2.y)
+
+        // Ensure left < right, top < bottom
+        val left = min(np1.x, np2.x).coerceIn(0.0f, 1.0f)
+        val top = min(np1.y, np2.y).coerceIn(0.0f, 1.0f)
+        val right = max(np1.x, np2.x).coerceIn(0.0f, 1.0f)
+        val bottom = max(np1.y, np2.y).coerceIn(0.0f, 1.0f)
+
+        return Ruler(
+            Point2D(left, top),
+            Point2D(right, bottom),
+            realDistance,
+            unit
+        )
     }
 
 

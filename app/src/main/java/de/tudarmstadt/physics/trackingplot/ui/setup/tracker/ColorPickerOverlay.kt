@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.magnifier
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
@@ -27,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -35,261 +33,14 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.min
 
-//TODO VERSION 1
-//@Composable
-//fun ColorPickerOverlay(
-//    bitmap: Bitmap,
-//    onColorSelected: (Color) -> Unit,
-//    onCancel: () -> Unit
-//) {
-//    var pickerPosition by remember { mutableStateOf(Offset.Zero) }
-//    var layoutSize by remember { mutableStateOf(IntSize.Zero) }
-//    var currentColor by remember { mutableStateOf(Color.White) }
-//
-//    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
-//
-//    Box(modifier = Modifier.fillMaxSize()) {
-//        // The frozen image with built-in magnifier lens
-//        Image(
-//            bitmap = imageBitmap,
-//            contentDescription = null,
-//            modifier = Modifier
-//                .fillMaxSize()
-//                .onGloballyPositioned { layoutSize = it.size }
-//                .magnifier(
-//                    sourceCenter = { pickerPosition },           // what to magnify
-//                    magnifierCenter = { pickerPosition + Offset(60f, -180f) }, // lens position (above the picker)
-//                    zoom = 7f,
-//                    size = DpSize(140.dp, 140.dp),
-//                    cornerRadius = 70.dp,
-//                    elevation = 8.dp,
-//                    clip = true
-////                    clippingEnabled = true
-//                ),
-//            contentScale = ContentScale.Fit   // matches typical camera preview
-//        )
-//
-//        // Drag/tap layer (transparent, covers the whole image)
-//        Box(
-//            modifier = Modifier
-//                .fillMaxSize()
-//                .pointerInput(Unit) {
-//                    // Tap to jump
-//                    detectTapGestures { offset ->
-//                        pickerPosition = offset.coerceIn(layoutSize)
-//                        currentColor = bitmap.getColorAt(offset, layoutSize)
-////                        onColorSelected(currentColor)
-//                    }
-//                }
-//                .pointerInput(Unit) {
-//                    // Drag with reduced speed
-//                    detectDragGestures(
-//                        onDragStart = { offset ->
-//                            pickerPosition = offset.coerceIn(layoutSize)
-//                            currentColor = bitmap.getColorAt(offset, layoutSize)
-////                            onColorSelected(currentColor)
-//                        },
-//                        onDrag = { change, dragAmount ->
-//                            change.consume()
-//                            val slowed = dragAmount * 0.35f   // ← tune this (0.2f–0.5f feels great)
-//                            pickerPosition = (pickerPosition + slowed).coerceIn(layoutSize)
-//                            currentColor = bitmap.getColorAt(pickerPosition, layoutSize)
-////                            onColorSelected(currentColor)
-//                        }
-//                    )
-//                }
-//        ) {
-//            // Visual picker (white ring + inner color dot)
-//            Canvas(modifier = Modifier.fillMaxSize()) {
-//                drawCircle(
-//                    color = Color.White,
-//                    radius = 24f,
-//                    center = pickerPosition,
-//                    style = Stroke(width = 5f)
-//                )
-//                drawCircle(
-//                    color = currentColor,
-//                    radius = 16f,
-//                    center = pickerPosition
-//                )
-//            }
-//        }
-//
-//        // Top bar with selected color preview + buttons
-//        Row(
-//            modifier = Modifier
-//                .fillMaxWidth()
-//                .padding(16.dp)
-//                .align(Alignment.TopCenter),
-//            horizontalArrangement = Arrangement.SpaceBetween
-//        ) {
-//            // Selected color preview
-//            Box(
-//                modifier = Modifier
-//                    .size(56.dp)
-//                    .background(currentColor, CircleShape)
-//                    .border(2.dp, Color.White, CircleShape)
-//            )
-//
-//            Row {
-//                TextButton(onClick = onCancel) { Text("Cancel") }
-//                Button(onClick = { onColorSelected(currentColor) }) { Text("Use Color") }
-//            }
-//        }
-//    }
-//}
-//
-//// Small helper to clamp offset
-//private fun Offset.coerceIn(size: IntSize): Offset =
-//    Offset(
-//        x = x.coerceIn(0f, size.width.toFloat()),
-//        y = y.coerceIn(0f, size.height.toFloat())
-//    )
-
-//TODO VERSION 2
-//@Composable
-//fun ColorPickerOverlay(
-//    bitmap: Bitmap,
-//    onColorSelected: (Color) -> Unit,
-//    onCancel: () -> Unit
-//) {
-//    var pickerPosition by remember { mutableStateOf(Offset.Zero) }           // slowed for precision
-//    var magnifierPosition by remember { mutableStateOf(Offset.Unspecified) } // raw/fast for lens
-//    var layoutSize by remember { mutableStateOf(IntSize.Zero) }
-//    var currentColor by remember { mutableStateOf(Color.White) }
-//    val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
-//
-//    Box(modifier = Modifier.fillMaxSize()) {
-//        Image(
-//            bitmap = imageBitmap,
-//            contentDescription = null,
-//            modifier = Modifier
-//                .fillMaxSize()
-//                .onGloballyPositioned { layoutSize = it.size }
-//                .pointerInput(Unit) {
-//                    // Optional: center on first appearance
-//                    if (pickerPosition == Offset.Zero && magnifierPosition == Offset.Unspecified) {
-//                        val center = Offset(layoutSize.width / 2f, layoutSize.height / 2f)
-//                        pickerPosition = center
-//                        magnifierPosition = center
-//                        currentColor = bitmap.getColorAt(center, layoutSize)
-//                    }
-//                }
-//                .magnifier(
-//                    sourceCenter = { magnifierPosition },
-//                    magnifierCenter = {
-//                        if (magnifierPosition.isSpecified) {
-//                            magnifierPosition + Offset(60f, -180f)
-//                        } else {
-//                            Offset.Unspecified
-//                        }
-//                    },
-//                    zoom = 7f,
-//                    size = DpSize(140.dp, 140.dp),
-//                    cornerRadius = 70.dp,
-//                    elevation = 8.dp,
-//                    clip = true
-//                ),
-//            contentScale = ContentScale.Fit
-//        )
-//
-//        Box(
-//            modifier = Modifier
-//                .fillMaxSize()
-//                .pointerInput(Unit) {
-//                    detectTapGestures { offset ->
-//                        val pos = offset.coerceIn(layoutSize)
-//                        pickerPosition = pos
-//                        magnifierPosition = pos   // snap lens too
-//                        currentColor = bitmap.getColorAt(pos, layoutSize)
-//                    }
-//                }
-//                .pointerInput(Unit) {
-//                    detectDragGestures(
-//                        onDragStart = { offset ->
-//                            val pos = offset.coerceIn(layoutSize)
-//                            pickerPosition = pos
-//                            magnifierPosition = pos
-//                            currentColor = bitmap.getColorAt(pos, layoutSize)
-//                        },
-//                        onDrag = { change, dragAmount ->
-//                            change.consume()
-//
-//                            // Picker moves slowly (precision)
-//                            val slowed = dragAmount * 0.35f
-//                            pickerPosition = (pickerPosition + slowed).coerceIn(layoutSize)
-//                            currentColor = bitmap.getColorAt(pickerPosition, layoutSize)
-//
-//                            // Lens follows finger directly (no lag feel)
-//                            magnifierPosition = (magnifierPosition + dragAmount).coerceIn(layoutSize)
-//                        },
-//                        onDragEnd = {
-//                            // Optional: keep lens visible or hide
-//                            // magnifierPosition = Offset.Unspecified
-//                        },
-//                        onDragCancel = {
-//                            magnifierPosition = Offset.Unspecified
-//                        }
-//                    )
-//                }
-//        ) {
-//            Canvas(modifier = Modifier.fillMaxSize()) {
-//                if (pickerPosition != Offset.Zero) {
-//                    drawCircle(
-//                        color = Color.White,
-//                        radius = 24f,
-//                        center = pickerPosition,
-//                        style = Stroke(width = 5f)
-//                    )
-//                    drawCircle(
-//                        color = currentColor,
-//                        radius = 16f,
-//                        center = pickerPosition
-//                    )
-//                }
-//            }
-//        }
-//
-//        // Top bar (unchanged)
-//        Row(
-//            modifier = Modifier
-//                .fillMaxWidth()
-//                .padding(16.dp)
-//                .align(Alignment.TopCenter),
-//            horizontalArrangement = Arrangement.SpaceBetween
-//        ) {
-//            Box(
-//                modifier = Modifier
-//                    .size(56.dp)
-//                    .background(currentColor, CircleShape)
-//                    .border(2.dp, Color.White, CircleShape)
-//            )
-//
-//            Row {
-//                TextButton(onClick = onCancel) { Text("Cancel") }
-//                Button(onClick = { onColorSelected(currentColor) }) { Text("Use Color") }
-//            }
-//        }
-//    }
-//}
-//
-//// Your coerceIn helper (unchanged)
-//private fun Offset.coerceIn(size: IntSize): Offset =
-//    Offset(
-//        x = x.coerceIn(0f, size.width.toFloat()),
-//        y = y.coerceIn(0f, size.height.toFloat())
-//    )
-
 @Composable
-fun BitmapColorPicker(
+fun ColorPickerOverlay(
     bitmap: Bitmap,
     modifier: Modifier = Modifier,
     magnifierRadius: Dp = 80.dp,
@@ -396,7 +147,6 @@ fun BitmapColorPicker(
 
         // Magnifier
         Canvas(modifier = Modifier.fillMaxSize()) {
-//        Canvas(modifier = Modifier.matchParentSize()) {
 
             if (pickerPosition == Offset.Zero) return@Canvas
 

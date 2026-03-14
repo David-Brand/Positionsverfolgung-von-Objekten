@@ -6,7 +6,7 @@ ColorTracker::ColorTracker(int id, cv::Scalar hsvColor, int tol)
 TrackerResult ColorTracker::update(const cv::Mat& frame) {
 
     cv::Mat hsv;
-    cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
+    cv::cvtColor(frame, hsv, cv::COLOR_RGB2HSV);
 
     cv::Scalar lower(
             targetColor[0] - tolerance,
@@ -26,24 +26,52 @@ TrackerResult ColorTracker::update(const cv::Mat& frame) {
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    cv::Rect bestRect;
+    std::pair<cv::Rect, cv::Point2d> bestBoundingBoxAndCentroid;
     double maxArea = 0;
 
     for (auto& contour : contours) {
         double area = cv::contourArea(contour);
         if (area > maxArea) {
             maxArea = area;
-            bestRect = cv::boundingRect(contour);
+
+            cv::Moments M = cv::moments(contour);
+
+            if (M.m00 != 0) {
+                double cx = M.m10 / M.m00;
+                double cy = M.m01 / M.m00;
+
+                bestBoundingBoxAndCentroid = std::make_pair(cv::boundingRect(contour), cv::Point2d(cx, cy));
+            }
         }
     }
 
-    return { trackerId, bestRect };
+    if (maxArea > 0)
+        return { trackerId, bestBoundingBoxAndCentroid };
+    else
+        return { trackerId, std::nullopt };
 }
 
 int TrackerManager::addTracker(cv::Scalar hsvColor, int tolerance) {
     int id = nextId++;
     trackers.emplace_back(id, hsvColor, tolerance);
     return id;
+}
+
+int TrackerManager::setTracker(int index, cv::Scalar hsvColor, int tolerance) {
+//    int id = index;//nextId++;
+//    trackers.emplace(trackers.begin() + index, hsvColor, tolerance);
+//    trackers.emplace_back(id, hsvColor, tolerance);
+
+    auto it = std::find_if(trackers.begin(), trackers.end(),
+            [&](const ColorTracker& colorTracker) {
+        return colorTracker.trackerId == index;
+    });
+    if (it != trackers.end()) {
+        *it = ColorTracker(index, hsvColor, tolerance);
+    } else {
+        trackers.push_back(ColorTracker(index, hsvColor, tolerance));
+    }
+    return index;
 }
 
 std::vector<TrackerResult> TrackerManager::updateAll(
@@ -69,156 +97,20 @@ std::vector<TrackerResult> TrackerManager::updateAll(
 
         TrackerResult r = tracker.update(cropped);
 
-        // Offset only if ROI was used
-        r.boundingBox.x += safeRoi.x;
-        r.boundingBox.y += safeRoi.y;
+        if (r.boundingBoxAndCentroid) {
+            // Offset only if ROI was used
+            r.boundingBoxAndCentroid->first.x += safeRoi.x;
+            r.boundingBoxAndCentroid->first.y += safeRoi.y;
+            r.boundingBoxAndCentroid->second.x += safeRoi.x;
+            r.boundingBoxAndCentroid->second.y += safeRoi.y;
+        }
 
         results.push_back(r);
     }
 
     return results;
-//    std::vector<TrackerResult> results;
-//
-//    for (auto& tracker : trackers) {
-//        results.push_back(tracker.update(frame));
-//    }
-//
-//    return results;
 }
 
-
-
-
-//#include "TrackerManager.hpp"
-//
-//TrackerManager::TrackerManager() {}
-//TrackerManager::~TrackerManager() { clear(); }
-//
-//void TrackerManager::clear() {
-//    trackers.clear();
-//}
-//
-//void TrackerManager::init(const cv::Mat& frame,
-//        const std::vector<TrackerConfig>& configs,
-//        cv::Scalar lower,
-//        cv::Scalar upper) {
-//
-//    clear();
-//
-//    lowerHSV = lower;
-//    upperHSV = upper;
-//
-//    for (const auto& cfg : configs) {
-//        InternalTracker t;
-//        t.id = cfg.id;
-//        t.box = cfg.initialBox;
-//        t.constraintBox = cfg.constraintBox;
-//        t.hasConstraint = cfg.hasConstraint;
-//        t.valid = true;
-//        t.lostFrames = 0;
-//        trackers.push_back(t);
-//    }
-//}
-//
-//std::vector<cv::Rect> TrackerManager::detectColorBlobs(
-//        const cv::Mat& frame) {
-//
-//    cv::Mat hsv;
-//    cv::cvtColor(frame, hsv, cv::COLOR_BGR2HSV);
-//
-//    cv::Mat mask;
-//    cv::inRange(hsv, lowerHSV, upperHSV, mask);
-//
-//    cv::erode(mask, mask, cv::Mat(), cv::Point(-1,-1), 2);
-//    cv::dilate(mask, mask, cv::Mat(), cv::Point(-1,-1), 2);
-//
-//    std::vector<std::vector<cv::Point>> contours;
-//    cv::findContours(mask, contours,
-//            cv::RETR_EXTERNAL,
-//            cv::CHAIN_APPROX_SIMPLE);
-//
-//    std::vector<cv::Rect> detections;
-//
-//    for (auto& c : contours) {
-//        if (cv::contourArea(c) > 200) {
-//            detections.push_back(cv::boundingRect(c));
-//        }
-//    }
-//
-//    return detections;
-//}
-//
-//void TrackerManager::associate(
-//        std::vector<cv::Rect>& detections) {
-//
-//    const double MAX_DIST = 120.0;
-//
-//    std::vector<bool> detectionUsed(detections.size(), false);
-//
-//    for (auto& tracker : trackers) {
-//
-//        if (!tracker.valid)
-//            continue;
-//
-//        cv::Point2d prevCenter(
-//                tracker.box.x + tracker.box.width / 2,
-//                tracker.box.y + tracker.box.height / 2
-//        );
-//
-//        double minDist = 1e9;
-//        int bestIdx = -1;
-//
-//        for (int i = 0; i < detections.size(); i++) {
-//
-//            if (detectionUsed[i])
-//                continue;
-//
-//            if (tracker.hasConstraint) {
-////                if (!(tracker.constraintBox & detections[i]).area())
-////                    continue;
-//            }
-//
-//            cv::Point2d center(
-//                    detections[i].x + detections[i].width / 2,
-//                    detections[i].y + detections[i].height / 2
-//            );
-//
-//            double dist = cv::norm(center - prevCenter);
-//
-//            if (dist < minDist) {
-//                minDist = dist;
-//                bestIdx = i;
-//            }
-//        }
-//
-//        if (bestIdx != -1 && minDist < MAX_DIST) {
-//            tracker.box = detections[bestIdx];
-//            tracker.lostFrames = 0;
-//            detectionUsed[bestIdx] = true;
-//        } else {
-//            tracker.lostFrames++;
-//            if (tracker.lostFrames > 10)
-//                tracker.valid = false;
-//        }
-//    }
-//}
-//
-//std::vector<TrackerResult> TrackerManager::update(
-//        const cv::Mat& frame) {
-//
-//    auto detections = detectColorBlobs(frame);
-//
-//    associate(detections);
-//
-//    std::vector<TrackerResult> results;
-//
-//    for (auto& t : trackers) {
-//        results.push_back({
-//                t.id,
-//                t.box,
-//                t.valid
-//        });
-//    }
-//
-//    return results;
-//}
+void TrackerManager::reset() {
+    trackers.clear();
+}

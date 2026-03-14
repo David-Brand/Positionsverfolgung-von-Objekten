@@ -40,6 +40,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -92,6 +93,8 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
 
     implementation(libs.mpandroidchart)
+
+    api(libs.androidx.sqlite)
 
     implementation(project(":opencv"))
 }

@@ -1,19 +1,25 @@
 package de.tudarmstadt.physics.trackingplot.tracker2
 
 import android.graphics.Rect
+import de.tudarmstadt.physics.trackingplot.tracker.TrackerResult
 
 class NativeTracker {
-
-    companion object {
-        init {
-            System.loadLibrary("native-lib")
-        }
-    }
 
     external fun addTracker(
 //        h: Int,
 //        s: Int,
 //        v: Int,
+        r: Int,
+        g: Int,
+        b: Int,
+        tolerance: Int
+    ): Int
+
+    external fun setTracker(
+//        h: Int,
+//        s: Int,
+//        v: Int,
+        index: Int,
         r: Int,
         g: Int,
         b: Int,
@@ -27,6 +33,8 @@ class NativeTracker {
         roiWidth: Int,
         roiHeight: Int
     ): Array<TrackerResult>
+
+    external fun reset()
 
     fun updateTrackers(
         matAddr: Long,
