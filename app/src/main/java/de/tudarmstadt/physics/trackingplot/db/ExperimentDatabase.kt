@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -77,6 +78,10 @@ class ExperimentDatabase private constructor(context: Context)
                 ")")
     }
 
+    override fun onConfigure(db: SQLiteDatabase) {
+        db.setForeignKeyConstraintsEnabled(true)
+    }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         /* no-op */ // implement when needed
     }
@@ -91,8 +96,11 @@ class ExperimentDatabase private constructor(context: Context)
     ): R {
         val transactionBlock: CoroutineScope.() -> R = txn@{
             val db = if (readOnly) readableDatabase else writableDatabase
-            if (readOnly) db.beginTransactionReadOnly()
-            else db.beginTransaction()
+            if (readOnly) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    db.beginTransactionReadOnly()
+                } else db.beginTransaction()
+            } else db.beginTransaction()
 
             try {
                 val scope = TransactionScope(db)

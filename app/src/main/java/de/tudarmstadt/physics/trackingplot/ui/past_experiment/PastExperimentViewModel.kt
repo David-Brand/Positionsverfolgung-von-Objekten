@@ -22,6 +22,12 @@ class PastExperimentViewModel(
 
     var csvContent = ""
 
+    suspend fun deleteExperiment() {
+        db.withTransaction(readOnly = false) {
+            deleteExperiment(experimentId)
+        }
+    }
+
     suspend fun exportExperiment() {
         val header = "trackerIndex,timestamp,centroidX,centroidY"
         val measurements = db.withTransaction(readOnly = true) {

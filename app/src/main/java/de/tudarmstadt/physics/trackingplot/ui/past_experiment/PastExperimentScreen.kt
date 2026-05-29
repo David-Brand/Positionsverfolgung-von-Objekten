@@ -9,15 +9,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -32,7 +37,8 @@ import kotlin.math.sqrt
 
 @Composable
 fun PastExperimentScreen(
-    viewModel: PastExperimentViewModel
+    viewModel: PastExperimentViewModel,
+    onDelete: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -110,6 +116,7 @@ fun PastExperimentScreen(
         }
 
         val scope = rememberCoroutineScope()
+        var showDeleteDialog by remember { mutableStateOf(false) }
 
         val createDocumentLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument("text/csv")
@@ -150,12 +157,7 @@ fun PastExperimentScreen(
                    }) {
                        Text("Export CSV")
                    }
-                   Button(onClick = {
-//                       scope.launch {
-//                           viewModel.exportExperiment()
-//                           createDocumentLauncher.launch("experiment_${viewModel.experimentId}.csv")
-//                       }
-                   }) {
+                   Button(onClick = { showDeleteDialog = true }) {
                        Text("Delete")
                    }
                }
@@ -186,16 +188,35 @@ fun PastExperimentScreen(
                     }) {
                         Text("Export CSV")
                     }
-                    Button(onClick = {
-//                       scope.launch {
-//                           viewModel.exportExperiment()
-//                           createDocumentLauncher.launch("experiment_${viewModel.experimentId}.csv")
-//                       }
-                    }) {
+                    Button(onClick = { showDeleteDialog = true }) {
                         Text("Delete")
                     }
                 }
             }
+        }
+
+        if (showDeleteDialog) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false },
+                title = { Text("Delete experiment") },
+                text = { Text("This experiment and all its data will be permanently deleted.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showDeleteDialog = false
+                        scope.launch {
+                            viewModel.deleteExperiment()
+                            onDelete()
+                        }
+                    }) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }
@@ -239,7 +260,7 @@ private fun Chart(
                 FilterChip(
                     selected = ySelected,
                     onClick = {
-                        onToggleLabel(x)
+                        onToggleLabel(y)
                         chart.notifyDataSetChanged()
                         chart.invalidate()
                     },

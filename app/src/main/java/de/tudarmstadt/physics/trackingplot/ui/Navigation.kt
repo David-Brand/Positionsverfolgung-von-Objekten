@@ -159,7 +159,8 @@ fun Navigation() {
                             db = ExperimentDatabase.getInstance(context)
                         )
                     }
-                )
+                ),
+                onDelete = dropUnlessStarted { navController.navigateUp() }
             )
         }
     }

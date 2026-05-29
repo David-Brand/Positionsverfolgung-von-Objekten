@@ -227,6 +227,10 @@ class TransactionScope(
         return rowId
     }
 
+    fun deleteExperiment(experimentId: Long) {
+        db.delete("Experiment", "ExperimentId = ?", arrayOf(experimentId.toString()))
+    }
+
     fun addMeasurements(
         experimentId: Long,
         timestamp: Long,

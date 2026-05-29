@@ -74,6 +74,31 @@ adb device # OPTIONAL. checks if successful
 scrcpy
 ```
 
+### Windows
+
+#### Setup:
+**scrcpy** and **android-platform-tools** are required.
+Using winget (built into Windows 10/11) for installation is recommended.
+Otherwise please seek the respective projects installation guides for help.
+```powershell
+winget install Genymobile.scrcpy
+winget install Google.PlatformTools
+```
+You can test the installation with (open a new terminal after installing):
+```powershell
+adb --version
+scrcpy --version
+```
+#### Remote control device:
+- On your device in **Developer Options** enable **Wireless debugging**
+- On your PC execute the following using the information provided by the android device:
+```powershell
+adb pair <pairing-ip>:<pairing-port> # then enter the pairing code
+adb connect
+adb devices # OPTIONAL. checks if successful
+scrcpy
+```
+
 ## Remote app usage
 - Scaling a plots x and y axis can be done by holding **ctrl** and then **clicking** and **dragging** horizontally or vertically respectively.
 - Sliding a plots viewport can be done by **dragging** horizontally or vertically.

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.util.Rational
+import androidx.camera.core.Camera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceRequest
@@ -59,16 +60,13 @@ class LiveExperimentViewModel(
 
     val surfaceRequests = MutableStateFlow<SurfaceRequest?>(null)
 
-    //TODO REFACTOR
+    var camera: Camera? = null
+
     private val _boxes = MutableStateFlow<List<NormalizedBox>>(emptyList())
     val boxes: StateFlow<List<NormalizedBox>> = _boxes
 
     var boundingBoxPoints by mutableStateOf<Pair<Offset, Offset>?>(null)
         private set
-//    val _boundingUiPoints = mutableStateListOf<Offset>()
-//    val boundingUiPoints = _boundingUiPoints as List<Offset>
-//    var useBoundingBox by mutableStateOf(true)
-    // TODO
 
     init {
         val config = trackingSession.getConfig()

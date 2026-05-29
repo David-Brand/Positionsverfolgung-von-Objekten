@@ -24,12 +24,22 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags.addAll(listOf("-frtti", "-fexceptions"))
-                abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64", "x86"))
+                abiFilters.add("arm64-v8a")
+//                abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64", "x86"))
 
 //                arguments("-DOpenCV_DIR=${project.property("opencvsdk")}/sdk/native/jni")
                 val path = File(System.getProperty("user.home"), "Downloads/OpenCV-android-sdk").path
                 arguments("-DOpenCV_DIR=${path}/sdk/native/jni")
             }
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
 

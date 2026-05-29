@@ -14,10 +14,6 @@ import de.tudarmstadt.physics.trackingplot.ui.theme.TrackingPlotTheme
 
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        private const val TAG = "MainActivity"
-    }
-
     private var permissionGranted = false
 
     private val cameraPermissionLauncher = registerForActivityResult(

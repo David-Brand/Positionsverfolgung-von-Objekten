@@ -8,6 +8,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
 import androidx.camera.viewfinder.core.ImplementationMode
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -91,7 +93,8 @@ fun LiveExperimentScreen(
         val useCaseGroup = viewModel.createUseCaseGroup()
 
         provider.unbindAll()
-        provider.bindToLifecycle(lifecycleOwner, selector, useCaseGroup)
+        val cam = provider.bindToLifecycle(lifecycleOwner, selector, useCaseGroup)
+        viewModel.camera = cam
     }
 
     val surfaceRequest by viewModel.surfaceRequests.collectAsStateWithLifecycle()
@@ -245,7 +248,15 @@ fun LiveExperimentScreen(
                                 val implementationMode = ImplementationMode.EXTERNAL
                                 CameraXViewfinder(
                                     modifier = Modifier
-                                        .fillMaxSize(),
+                                        .fillMaxSize()
+                                        .pointerInput(Unit) {
+                                            detectTransformGestures { _, _, zoomChange, _ ->
+                                                val cam = viewModel.camera ?: return@detectTransformGestures
+                                                val z = cam.cameraInfo.zoomState.value ?: return@detectTransformGestures
+                                                val newRatio = (z.zoomRatio * zoomChange).coerceIn(z.minZoomRatio, z.maxZoomRatio)
+                                                cam.cameraControl.setZoomRatio(newRatio)
+                                            }
+                                        },
                                     surfaceRequest = it,
                                     implementationMode = implementationMode,
                                     contentScale = ContentScale.Fit
@@ -416,7 +427,15 @@ fun LiveExperimentScreen(
                         val implementationMode = ImplementationMode.EXTERNAL
                         CameraXViewfinder(
                             modifier = Modifier
-                                .fillMaxSize(),
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectTransformGestures { _, _, zoomChange, _ ->
+                                        val cam = viewModel.camera ?: return@detectTransformGestures
+                                        val z = cam.cameraInfo.zoomState.value ?: return@detectTransformGestures
+                                        val newRatio = (z.zoomRatio * zoomChange).coerceIn(z.minZoomRatio, z.maxZoomRatio)
+                                        cam.cameraControl.setZoomRatio(newRatio)
+                                    }
+                                },
                             surfaceRequest = it,
                             implementationMode = implementationMode,
                             contentScale = ContentScale.Fit
