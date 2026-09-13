@@ -1,412 +1,325 @@
 package de.tudarmstadt.physics.trackingplot.ui.setup
 
 import android.graphics.Bitmap
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.util.Rational
-import androidx.camera.core.CameraEffect
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.Preview
-import androidx.camera.core.SurfaceRequest
-import androidx.camera.core.UseCaseGroup
-import androidx.camera.core.ViewPort
-import androidx.camera.core.resolutionselector.AspectRatioStrategy
-import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import de.tudarmstadt.physics.trackingplot.DistanceUnit
+import de.tudarmstadt.physics.trackingplot.camera.CameraPipeline
+import de.tudarmstadt.physics.trackingplot.db.DatabaseException
 import de.tudarmstadt.physics.trackingplot.db.ExperimentDatabase
-import de.tudarmstadt.physics.trackingplot.tracker2.ColorTrackerConfig
-import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
-import de.tudarmstadt.physics.trackingplot.tracker2.Point2D
-import de.tudarmstadt.physics.trackingplot.tracker2.Roi
-import de.tudarmstadt.physics.trackingplot.tracker2.Ruler
-import de.tudarmstadt.physics.trackingplot.tracker2.TrackingConfig
-import de.tudarmstadt.physics.trackingplot.tracker2.TrackingSession
-import de.tudarmstadt.physics.trackingplot.tracking.yuvToRgba
-import de.tudarmstadt.physics.trackingplot.ui.setup.tracker.NormalizedBox
+import de.tudarmstadt.physics.trackingplot.geometry.RulerScale
+import de.tudarmstadt.physics.trackingplot.model.ColorTrackerConfig
+import de.tudarmstadt.physics.trackingplot.model.DistanceUnit
+import de.tudarmstadt.physics.trackingplot.model.HsvColor
+import de.tudarmstadt.physics.trackingplot.model.HsvTolerance
+import de.tudarmstadt.physics.trackingplot.model.Point2D
+import de.tudarmstadt.physics.trackingplot.model.Roi
+import de.tudarmstadt.physics.trackingplot.model.Ruler
+import de.tudarmstadt.physics.trackingplot.model.TrackedObject
+import de.tudarmstadt.physics.trackingplot.model.TrackingConfig
+import de.tudarmstadt.physics.trackingplot.tracker.NativeTracker
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import org.opencv.core.Core
-import org.opencv.core.Mat
-import java.util.concurrent.Executors
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
+/**
+ * State of the three setup steps (ruler, region of interest, trackers). Shared by the setup
+ * screens; scoped to the setup navigation graph.
+ *
+ * All points are canonical frame coordinates (see FrameGeometry); the screens convert to and
+ * from screen positions with a FrameMapper.
+ */
 class SetupViewModel(
-    private val nativeTracker: NativeTracker,
-    private val trackingSession: TrackingSession,
     private val db: ExperimentDatabase
-): ViewModel() {
+) : ViewModel() {
 
-    // RULER
-    /*private */val _uiPoints = mutableStateListOf<Offset>() //ui offset coordinates
-    val uiPoints = _uiPoints as List<Offset>
+    data class TrackerSlot(
+        /** Picked colour (ARGB) or null while nothing has been picked yet. */
+        val color: Int?,
+        val tolerance: Int = ColorTrackerConfig.DEFAULT_TOLERANCE
+    ) {
+        val hsv: HsvColor? get() = color?.let { HsvColor.fromArgb(it) }
+    }
 
-    /*private */val _normalizedPoints = mutableStateListOf<Offset>() //0.0 - 1.0
-    val normalizedPoints = _normalizedPoints as List<Offset>
+    enum class RulerProblem { NEED_POINTS, NEED_DISTANCE, INVALID_DISTANCE, DISTANCE_NOT_POSITIVE, POINTS_TOO_CLOSE }
+
+    sealed interface RulerState {
+        /** No points and no distance entered: the experiment runs without real-world units. */
+        data object NotSet : RulerState
+        data class Incomplete(val problem: RulerProblem) : RulerState
+        data class Valid(val ruler: Ruler) : RulerState
+    }
+
+    enum class StartProblem { NO_TRACKER, TRACKER_WITHOUT_COLOR, INVALID_SAMPLING_RATE }
+
+    sealed interface UiEvent {
+        data class ToLiveExperiment(val experimentId: Long) : UiEvent
+    }
+
+    // ---------------------------------------------------------------- camera
+
+    private val tracker = NativeTracker()
+
+    @Volatile
+    private var trackerPreviewEnabled = false
+
+    val pipeline = CameraPipeline(tracker) { trackerPreviewEnabled }
+
+    /** Boxes of the currently tracked objects (only while the tracker preview is enabled). */
+    val trackedObjects: StateFlow<List<TrackedObject>> = pipeline.frames
+        .map { it.objects }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(1_000), emptyList())
+
+    /** The tracker setup screen enables live tracking while it is visible. */
+    fun setTrackerPreviewEnabled(enabled: Boolean) {
+        trackerPreviewEnabled = enabled
+    }
+
+    val zoomRatio: StateFlow<Float> = pipeline.zoomRatio
+    val zoomRange: StateFlow<ClosedFloatingPointRange<Float>> = pipeline.zoomRange
+
+    fun setZoomRatio(ratio: Float) = pipeline.setZoomRatio(ratio)
+
+    fun zoomBy(factor: Float) = pipeline.setZoomRatio(pipeline.zoomRatio.value * factor)
+
+    // ---------------------------------------------------------------- ruler
+
+    private val _rulerPoints = mutableStateListOf<Point2D>()
+    val rulerPoints: List<Point2D> get() = _rulerPoints
 
     var distanceText by mutableStateOf("")
-    var selectedUnit by mutableStateOf(DistanceUnit.CENTIMETER)
+    var distanceUnit by mutableStateOf(DistanceUnit.CENTIMETER)
 
-    var distance by mutableStateOf<Double?>(null)
+    /** Distance parsed from [distanceText]; accepts a decimal comma. Null when not a number. */
+    val parsedDistance: Float?
+        get() = distanceText.trim().replace(',', '.').toFloatOrNull()?.takeIf { it.isFinite() }
 
-
-
-    // BOUNDING BOX
-    val _boundingUiPoints = mutableStateListOf<Offset>()
-    val boundingUiPoints = _boundingUiPoints as List<Offset>
-
-    val _boundingNormalizedPoints = mutableStateListOf<Offset>() //0.0 - 1.0
-    val boundingNormalizedPoints = _boundingNormalizedPoints as List<Offset>
-
-    var useBoundingBox by mutableStateOf(true)
-
-
-
-    // TRACKER
-
-    var imageCapture by mutableStateOf<ImageCapture?>(null)
-//    fun onPickColorPressed(
-//        imageCapture: ImageCapture,
-//        context: Context
-//    ) {
-//        val executor = ContextCompat.getMainExecutor(context)
-//
-//        imageCapture.takePicture(
-//            executor
-//        )
-//    }
-    var frozenBitmap: Bitmap? by mutableStateOf(null)
-    var isPickingColor by mutableStateOf(false)
-
-
-
-
-    val surfaceRequests = MutableStateFlow<SurfaceRequest?>(null)
-
-
-    fun createUseCaseGroup(
-//        cameraInfo: CameraInfo,
-        imageCapture: ImageCapture? = null,
-        imageAnalysis: ImageAnalysis? = null,
-        effect: CameraEffect? = null,
-    ): UseCaseGroup {
-        val previewUseCase = createPreviewUseCase()
-
-        return UseCaseGroup.Builder().apply {
-            setViewPort(ViewPort.Builder(
-                Rational(3, 4),
-                previewUseCase.targetRotation
-            ).build())
-            addUseCase(previewUseCase)
-
-            imageCapture?.let { addUseCase(it) }
-            imageAnalysis?.let { addUseCase(it) }
-
-//            todo anlysis use case??
-            effect?.let { addEffect(it) }
-        }.build()
-    }
-
-    private fun createPreviewUseCase(): Preview = Preview.Builder().apply {
-        setResolutionSelector(
-            ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                .build()
-        )
-    }.build().apply {
-        setSurfaceProvider { surfaceRequest ->
-            surfaceRequests.update { surfaceRequest }
+    val rulerState: RulerState
+        get() {
+            val hasInput = _rulerPoints.isNotEmpty() || distanceText.isNotBlank()
+            if (!hasInput) return RulerState.NotSet
+            if (_rulerPoints.size < 2) return RulerState.Incomplete(RulerProblem.NEED_POINTS)
+            if (distanceText.isBlank()) return RulerState.Incomplete(RulerProblem.NEED_DISTANCE)
+            val distance = parsedDistance ?: return RulerState.Incomplete(RulerProblem.INVALID_DISTANCE)
+            if (distance <= 0f) return RulerState.Incomplete(RulerProblem.DISTANCE_NOT_POSITIVE)
+            val ruler = Ruler(_rulerPoints[0], _rulerPoints[1], distance, distanceUnit)
+            if (!RulerScale.isValid(ruler)) return RulerState.Incomplete(RulerProblem.POINTS_TOO_CLOSE)
+            return RulerState.Valid(ruler)
         }
+
+    fun addRulerPoint(point: Point2D) {
+        if (_rulerPoints.size < 2) _rulerPoints.add(point)
     }
 
+    fun moveRulerPoint(index: Int, point: Point2D) {
+        if (index in _rulerPoints.indices) _rulerPoints[index] = point
+    }
 
-    private val _boxes = MutableStateFlow<List<NormalizedBox>>(emptyList())
-    val boxes: StateFlow<List<NormalizedBox>> = _boxes
+    fun clearRulerPoints() = _rulerPoints.clear()
 
-    fun createImageAnalysis(): ImageAnalysis {
-        return ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build().apply {
-                setAnalyzer(
-                    Executors.newSingleThreadExecutor()
-                ) { imageProxy ->
-                    try {
-                        imageProxy.image?.let {
-                            if (it.format == ImageFormat.YUV_420_888 && it.planes.size == 3) {
-                                val mat = it.yuvToRgba()
-                                when (imageProxy.imageInfo.rotationDegrees) {
-                                    90 -> Core.rotate(mat, mat, Core.ROTATE_90_CLOCKWISE)
-                                    180 -> Core.rotate(mat, mat, Core.ROTATE_180)
-                                    270 -> Core.rotate(mat, mat, Core.ROTATE_90_COUNTERCLOCKWISE)
-                                }
-                                processFrame(mat)
-                            }
-                        }
-                    } catch (e: IllegalStateException) {
-                        e.printStackTrace()
-                    } finally {
-                        imageProxy.close()
-                    }
-                }
+    // ---------------------------------------------------------------- region of interest
+
+    private val _roiPoints = mutableStateListOf<Point2D>()
+    val roiPoints: List<Point2D> get() = _roiPoints
+
+    var useRoi by mutableStateOf(true)
+
+    /** The region that will be used, or null (whole frame) if disabled, incomplete or too small. */
+    val roi: Roi?
+        get() {
+            if (!useRoi || _roiPoints.size < 2) return null
+            val roi = Roi(_roiPoints[0], _roiPoints[1])
+            val wideEnough = roi.right - roi.left >= MIN_ROI_SIZE
+            val tallEnough = roi.bottom - roi.top >= MIN_ROI_SIZE
+            return if (wideEnough && tallEnough) roi else null
+        }
+
+    /** True when two points are set but the region between them is too small to be useful. */
+    val roiTooSmall: Boolean
+        get() = _roiPoints.size == 2 && Roi(_roiPoints[0], _roiPoints[1]).let {
+            it.right - it.left < MIN_ROI_SIZE || it.bottom - it.top < MIN_ROI_SIZE
+        }
+
+    fun addRoiPoint(point: Point2D) {
+        if (_roiPoints.size < 2) _roiPoints.add(point)
+    }
+
+    fun moveRoiPoint(index: Int, point: Point2D) {
+        if (index in _roiPoints.indices) _roiPoints[index] = point
+    }
+
+    fun clearRoiPoints() = _roiPoints.clear()
+
+    // ---------------------------------------------------------------- trackers
+
+    private val _trackerSlots = mutableStateListOf(TrackerSlot(color = null))
+    val trackerSlots: List<TrackerSlot> get() = _trackerSlots
+
+    val canAddTracker: Boolean get() = _trackerSlots.size < ColorTrackerConfig.MAX_TRACKERS
+
+    fun addTrackerSlot() {
+        if (canAddTracker) _trackerSlots.add(TrackerSlot(color = null))
+    }
+
+    fun removeTrackerSlot(index: Int) {
+        if (index !in _trackerSlots.indices || _trackerSlots.size == 1) return
+        _trackerSlots.removeAt(index)
+        if (pickingSlot == index) cancelColorPick()
+        syncNativeTrackers()
+    }
+
+    fun setTrackerTolerance(index: Int, tolerance: Int) {
+        if (index !in _trackerSlots.indices) return
+        val clamped = tolerance.coerceIn(ColorTrackerConfig.MIN_TOLERANCE, ColorTrackerConfig.MAX_TOLERANCE)
+        _trackerSlots[index] = _trackerSlots[index].copy(tolerance = clamped)
+        syncNativeTrackers()
+    }
+
+    /** Index of the slot a colour is being picked for; the picker UI is shown while non-null. */
+    var pickingSlot by mutableStateOf<Int?>(null)
+        private set
+
+    /** Frozen camera frame (canonical orientation) to pick the colour from. */
+    var snapshot by mutableStateOf<Bitmap?>(null)
+        private set
+
+    var isCapturingSnapshot by mutableStateOf(false)
+        private set
+
+    var snapshotError by mutableStateOf<Throwable?>(null)
+        private set
+
+    fun startColorPick(slotIndex: Int) {
+        if (slotIndex !in _trackerSlots.indices || isCapturingSnapshot) return
+        viewModelScope.launch {
+            isCapturingSnapshot = true
+            snapshotError = null
+            try {
+                val bitmap = pipeline.captureSnapshot()
+                snapshot = bitmap
+                pickingSlot = slotIndex
+            } catch (e: Exception) {
+                snapshotError = e
+            } finally {
+                isCapturingSnapshot = false
             }
+        }
     }
 
-    private fun Offset.toTopLeftOrigin(): Offset {
-        val newX = 1f - this.x // flip X
-        val newY = this.y       // Y is already top = 0, bottom = 1 → matches Mat
-        return Offset(newX, newY)
+    fun clearSnapshotError() {
+        snapshotError = null
     }
 
-    private fun normalizedPointsToRoiBottomLeftOrigin(
-        p1: Offset,
-        p2: Offset,
-        frameWidth: Int,
-        frameHeight: Int
-    ): Rect {
-
-        // Convert from normalized bottom-left origin to Mat top-left origin
-        val x1 = ((1f - p1.x) * frameWidth).roundToInt()
-        val y1 = ((1f - p1.y) * frameHeight).roundToInt()
-
-        val x2 = ((1f - p2.x) * frameWidth).roundToInt()
-        val y2 = ((1f - p2.y) * frameHeight).roundToInt()
-
-        val left = min(x1, x2).coerceIn(0, frameWidth - 1)
-        val top = min(y1, y2).coerceIn(0, frameHeight - 1)
-        val right = max(x1, x2).coerceIn(0, frameWidth)
-        val bottom = max(y1, y2).coerceIn(0, frameHeight)
-
-        return Rect(left, top, right, bottom)
-    }
-    private fun calculateRoi(
-        p1: Offset,
-        p2: Offset,
-        frameWidth: Int,
-        frameHeight: Int
-    ): Rect {
-        // Convert normalized to pixel coordinates
-        val x1 = (p1.x * frameWidth).roundToInt()
-        val y1 = (p1.y * frameHeight).roundToInt()
-
-        val x2 = (p2.x * frameWidth).roundToInt()
-        val y2 = (p2.y * frameHeight).roundToInt()
-
-        // Ensure correct ordering regardless of drag direction
-        val left = min(x1, x2)
-        val right = max(x1, x2)
-        val top = min(y1, y2)
-        val bottom = max(y1, y2)
-
-        // Clamp to image bounds
-        val clampedLeft = left.coerceIn(0, frameWidth - 1)
-        val clampedTop = top.coerceIn(0, frameHeight - 1)
-        val clampedRight = right.coerceIn(0, frameWidth)
-        val clampedBottom = bottom.coerceIn(0, frameHeight)
-
-        return Rect(
-            clampedLeft,
-            clampedTop,
-            clampedRight,
-            clampedBottom
-        )
+    fun confirmColorPick(argb: Int) {
+        val index = pickingSlot ?: return
+        if (index in _trackerSlots.indices) {
+            _trackerSlots[index] = _trackerSlots[index].copy(color = argb)
+        }
+        cancelColorPick()
+        syncNativeTrackers()
     }
 
-    fun normalizedPointsToRect(p1: Offset, p2: Offset, frameWidth: Int, frameHeight: Int): Rect {
-
-        // Convert both points to top-left origin
-//        val np1 = Offset(1f - p1.x, p1.y)
-//        val np2 = Offset(1f - p2.x, p2.y)
-//        val np1 = Offset(p1.x, 1f - p1.y)
-//        val np2 = Offset(p2.x, 1f - p2.y)
-        val np1 = Offset(p1.x, p1.y)
-        val np2 = Offset(p2.x, p2.y)
-
-        // Convert to pixel coordinates
-        val x1 = (np1.x * frameWidth).roundToInt()
-        val y1 = (np1.y * frameHeight).roundToInt()
-        val x2 = (np2.x * frameWidth).roundToInt()
-        val y2 = (np2.y * frameHeight).roundToInt()
-
-        // Ensure left < right, top < bottom
-        val left = min(x1, x2).coerceIn(0, frameWidth - 1)
-        val top = min(y1, y2).coerceIn(0, frameHeight - 1)
-        val right = max(x1, x2).coerceIn(0, frameWidth)
-        val bottom = max(y1, y2).coerceIn(0, frameHeight)
-
-        return Rect(left, top, right, bottom)
+    fun cancelColorPick() {
+        pickingSlot = null
+        snapshot = null
     }
 
-    private fun processFrame(mat: Mat) {
+    private fun syncNativeTrackers() {
+        tracker.clear()
+        _trackerSlots.forEachIndexed { index, slot ->
+            val hsv = slot.hsv ?: return@forEachIndexed
+            tracker.setTracker(index, hsv, HsvTolerance.fromUiTolerance(slot.tolerance))
+        }
+    }
 
-//        val mat = imageProxyToMat(imageProxy) // You said this exists
-//        val mat = image.yuvToRgba() // You said this exists
+    // ---------------------------------------------------------------- start
 
-        val frameWidth = mat.width()
-        val frameHeight = mat.height()
+    var description by mutableStateOf("")
+    var samplingRateText by mutableStateOf(TrackingConfig.DEFAULT_SAMPLING_RATE.toString())
 
-        val roi = if (useBoundingBox) {
-            val points = boundingNormalizedPoints
-//            if (points.size == 2) calculateRoi(points[0], points[1], frameWidth, frameHeight)
-            if (points.size == 2) normalizedPointsToRect(points[0], points[1], frameWidth, frameHeight)
-            else null
-        } else null
+    /** Sampling rate parsed from [samplingRateText], or null when out of range. */
+    val samplingRate: Int?
+        get() = samplingRateText.trim().toIntOrNull()
+            ?.takeIf { it in TrackingConfig.MIN_SAMPLING_RATE..TrackingConfig.MAX_SAMPLING_RATE }
 
-//        println("ROI : ${roi?.left} ${roi?.top} ${roi?.width()} ${roi?.height()}")
-        val results = nativeTracker.updateTrackers(
-            mat.nativeObjAddr, roi
-        )
-
-
-        val normalized = results.map { r ->
-
-            val left = r.x.toFloat() / frameWidth
-            val top = r.y.toFloat() / frameHeight
-            val right = (r.x + r.width).toFloat() / frameWidth
-            val bottom = (r.y + r.height).toFloat() / frameHeight
-            val centroidX = r.centroidX / frameWidth
-            val centroidY = r.centroidY / frameWidth
-
-            NormalizedBox(
-                trackerId = r.trackerId,
-                left = left,
-                top = top,
-                right = right,
-                bottom = bottom,
-                centroidX = centroidX,
-                centroidY = centroidY
-            )
+    val startProblem: StartProblem?
+        get() = when {
+            _trackerSlots.none { it.color != null } -> StartProblem.NO_TRACKER
+            _trackerSlots.any { it.color == null } -> StartProblem.TRACKER_WITHOUT_COLOR
+            samplingRate == null -> StartProblem.INVALID_SAMPLING_RATE
+            else -> null
         }
 
-        _boxes.value = normalized
+    var isStarting by mutableStateOf(false)
+        private set
+
+    var startError by mutableStateOf<Throwable?>(null)
+        private set
+
+    fun clearStartError() {
+        startError = null
     }
 
+    private val eventsChannel = Channel<UiEvent>(Channel.BUFFERED)
+    val events = eventsChannel.receiveAsFlow()
+
+    /** Builds the configuration from the current state, or null if it is not startable. */
+    fun buildTrackingConfig(): TrackingConfig? {
+        if (startProblem != null) return null
+        val trackers = _trackerSlots.mapNotNull { slot ->
+            slot.color?.let { ColorTrackerConfig(color = it, tolerance = slot.tolerance) }
+        }
+        return TrackingConfig(
+            roi = roi,
+            ruler = (rulerState as? RulerState.Valid)?.ruler,
+            trackers = trackers,
+            samplingRate = samplingRate ?: return null,
+            zoomRatio = pipeline.zoomRatio.value
+        )
+    }
+
+    fun startExperiment() {
+        if (isStarting) return
+        val config = buildTrackingConfig() ?: return
+        val description = description.trim()
+        isStarting = true
+        startError = null
+        viewModelScope.launch {
+            try {
+                val experimentId = db.write {
+                    addExperiment(config, description, System.currentTimeMillis())
+                }
+                eventsChannel.send(UiEvent.ToLiveExperiment(experimentId))
+            } catch (e: DatabaseException) {
+                startError = e
+                isStarting = false
+            }
+        }
+    }
+
+    init {
+        viewModelScope.launch {
+            snapshotFlow { roi }.collect { pipeline.roi = it }
+        }
+    }
 
     override fun onCleared() {
         super.onCleared()
-        //TODO reset NativeTracker
+        pipeline.close()
+        tracker.close()
+        eventsChannel.close()
     }
 
-    private val _trackers = mutableStateListOf<ColorTrackerConfig>()
-    val trackers = _trackers as List<ColorTrackerConfig>
-    fun trackerColorSelected(
-        index: Int,
-        color: Color,
-        tolerance: Int
-    ) {
-        if (_trackers.size == index) {
-            _trackers.add(ColorTrackerConfig(
-                color = color.toArgb(),
-                tolerance = tolerance.toFloat()
-            ))
-        } else {
-            _trackers[index] = ColorTrackerConfig(
-                color = color.toArgb(),
-                tolerance = tolerance.toFloat()
-            )
-        }
-        nativeTracker.setTracker(
-            index = index,
-            r = (color.red * 255).toInt(),
-            g = (color.green * 255).toInt(),
-            b = (color.blue * 255).toInt(),
-            tolerance = tolerance
-        )
-    }
-
-    var samplingRateText by mutableStateOf("10")
-    var description by mutableStateOf("")
-
-
-    fun storeExperimentSetupAndStart() {
-        viewModelScope.launch {
-            //todo store setup
-
-            val roi = if (useBoundingBox) {
-                val points = boundingNormalizedPoints.toList()
-//            if (points.size == 2) calculateRoi(points[0], points[1], frameWidth, frameHeight)
-                if (points.size == 2) normalizedPointsToRoi(points[0], points[1])
-                else null
-            } else null
-
-            val rulerPoints = normalizedPoints.toList()
-            val realDistance = distanceText.toFloatOrNull()
-            val ruler = if (rulerPoints.size == 2 && realDistance != null) {
-                //todo
-                normalizedPointsToRuler(rulerPoints[0], rulerPoints[1], realDistance, selectedUnit)
-            } else null
-            val config = TrackingConfig(
-                roi,
-                ruler,
-                _trackers.toList()
-            )
-            val description = description
-            trackingSession.configure(config)
-            //on success
-//            val experimentId = 123L //todo this is returned by setup store
-
-            val experimentId = db.withTransaction(readOnly = false) {
-                val id = addExperiment(config, description)
-                id
-            }
-
-            eventsChannel.send(UiEvent.ToLiveExperiment(experimentId))
-        }
-    }
-
-    fun normalizedPointsToRoi(p1: Offset, p2: Offset): Roi {
-        val np1 = Offset(p1.x, p1.y)
-        val np2 = Offset(p2.x, p2.y)
-
-        // Ensure left < right, top < bottom
-        val left = min(np1.x, np2.x).coerceIn(0.0f, 1.0f)
-        val top = min(np1.y, np2.y).coerceIn(0.0f, 1.0f)
-        val right = max(np1.x, np2.x).coerceIn(0.0f, 1.0f)
-        val bottom = max(np1.y, np2.y).coerceIn(0.0f, 1.0f)
-
-        return Roi(
-            Point2D(left, top),
-            Point2D(right, bottom),
-        )
-    }
-
-    fun normalizedPointsToRuler(p1: Offset, p2: Offset, realDistance: Float, unit: DistanceUnit): Ruler {
-        val np1 = Offset(p1.x, p1.y)
-        val np2 = Offset(p2.x, p2.y)
-
-        // Ensure left < right, top < bottom
-        val left = min(np1.x, np2.x).coerceIn(0.0f, 1.0f)
-        val top = min(np1.y, np2.y).coerceIn(0.0f, 1.0f)
-        val right = max(np1.x, np2.x).coerceIn(0.0f, 1.0f)
-        val bottom = max(np1.y, np2.y).coerceIn(0.0f, 1.0f)
-
-        return Ruler(
-            Point2D(left, top),
-            Point2D(right, bottom),
-            realDistance,
-            unit
-        )
-    }
-
-
-    private val eventsChannel = Channel<UiEvent>()
-    val eventsChannelFlow = eventsChannel.receiveAsFlow()
-
-    sealed interface UiEvent {
-        data class ToLiveExperiment(val experimentId: Long): UiEvent
+    companion object {
+        /** Minimum width and height of a region of interest, as a fraction of the frame. */
+        const val MIN_ROI_SIZE = 0.05f
     }
 }

@@ -1,0 +1,42 @@
+<resources>
+    <!-- Shared across the setup screens (SetupScreenParts.kt) -->
+    <string name="setup_step_indicator">Step %1$d of %2$d</string>
+    <string name="setup_zoom_reset">Reset</string>
+
+    <!-- Step 1: ruler / reference length -->
+    <string name="setup_ruler_title">Reference length</string>
+    <string name="setup_ruler_distance_label">Distance</string>
+    <string name="setup_ruler_unit_label">Unit</string>
+    <string name="setup_ruler_hint_optional">Optional: without a reference, positions and lengths are only shown as a fraction of the frame.</string>
+    <string name="setup_ruler_need_points">Tap the camera image to place two reference points.</string>
+    <string name="setup_ruler_need_distance">Enter the real-world distance between the two points.</string>
+    <string name="setup_ruler_invalid_distance">Enter a valid number for the distance.</string>
+    <string name="setup_ruler_distance_not_positive">The distance must be greater than zero.</string>
+    <string name="setup_ruler_points_too_close">The two points are too close together; move them further apart.</string>
+    <string name="setup_ruler_reference_set">Reference set: %1$s %2$s</string>
+    <string name="setup_ruler_skip">Skip (no reference)</string>
+
+    <!-- Step 2: region of interest -->
+    <string name="setup_roi_title">Region of interest</string>
+    <string name="setup_roi_use_checkbox">Track only inside this region</string>
+    <string name="setup_roi_too_small">This region is too small to track reliably.</string>
+
+    <!-- Step 3: trackers -->
+    <string name="setup_tracker_title">Trackers</string>
+    <string name="setup_tracker_remove">Remove</string>
+    <string name="setup_tracker_pick_color">Pick colour</string>
+    <string name="setup_tracker_tolerance">Tolerance: %1$d</string>
+    <string name="setup_tracker_not_trackable">This colour is too dark or grey to track reliably.</string>
+    <string name="setup_add_tracker">Add tracker</string>
+    <string name="setup_start_experiment">Start experiment</string>
+    <string name="setup_start_problem_no_tracker">Pick a colour for at least one tracker to start.</string>
+    <string name="setup_start_problem_tracker_without_color">Pick a colour for every tracker, or remove the ones you don\'t need.</string>
+    <string name="setup_start_problem_invalid_sampling_rate">Enter a valid samples-per-second value.</string>
+    <string name="setup_start_dialog_title">Start experiment</string>
+    <string name="setup_sampling_rate_label">Samples per second</string>
+    <string name="setup_sampling_rate_supporting">Between %1$d and %2$d</string>
+    <string name="setup_description_label">Description (optional)</string>
+
+    <!-- Colour picker -->
+    <string name="setup_color_picker_use_color">Use colour</string>
+</resources>

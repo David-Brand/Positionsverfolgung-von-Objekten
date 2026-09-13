@@ -1,4 +1,4 @@
-package de.tudarmstadt.physics.trackingplot
+package de.tudarmstadt.physics.trackingplot.model
 
 enum class DistanceUnit(val symbol: String, val multiplierToMeters: Float) {
     METER("m", 1f),
@@ -6,8 +6,6 @@ enum class DistanceUnit(val symbol: String, val multiplierToMeters: Float) {
     MILLIMETER("mm", 0.001f);
 
     companion object {
-        fun fromSymbol(symbol: String): DistanceUnit {
-            return requireNotNull(entries.find { it.symbol == symbol })
-        }
+        fun fromSymbolOrNull(symbol: String): DistanceUnit? = entries.find { it.symbol == symbol }
     }
 }

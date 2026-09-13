@@ -1,391 +1,259 @@
 package de.tudarmstadt.physics.trackingplot.ui.live_experiment
 
-import android.content.Context
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.util.Rational
-import androidx.camera.core.Camera
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
-import androidx.camera.core.SurfaceRequest
-import androidx.camera.core.UseCaseGroup
-import androidx.camera.core.ViewPort
-import androidx.camera.core.resolutionselector.AspectRatioStrategy
-import androidx.camera.core.resolutionselector.ResolutionSelector
-import androidx.camera.video.FileOutputOptions
-import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
-import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateSetOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.github.mikephil.charting.data.Entry
-import com.github.mikephil.charting.data.LineData
-import com.github.mikephil.charting.data.LineDataSet
+import de.tudarmstadt.physics.trackingplot.camera.CameraPipeline
+import de.tudarmstadt.physics.trackingplot.db.DatabaseException
 import de.tudarmstadt.physics.trackingplot.db.ExperimentDatabase
-import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
-import de.tudarmstadt.physics.trackingplot.tracker2.TrackingConfig
-import de.tudarmstadt.physics.trackingplot.tracker2.TrackingSession
-import de.tudarmstadt.physics.trackingplot.tracking.yuvToRgba
-import de.tudarmstadt.physics.trackingplot.ui.setup.tracker.NormalizedBox
+import de.tudarmstadt.physics.trackingplot.db.MeasurementWriter
+import de.tudarmstadt.physics.trackingplot.geometry.RulerScale
+import de.tudarmstadt.physics.trackingplot.model.ExperimentSummary
+import de.tudarmstadt.physics.trackingplot.model.FrameResult
+import de.tudarmstadt.physics.trackingplot.model.HsvColor
+import de.tudarmstadt.physics.trackingplot.model.HsvTolerance
+import de.tudarmstadt.physics.trackingplot.model.MeasurementSample
+import de.tudarmstadt.physics.trackingplot.model.TrackedObject
+import de.tudarmstadt.physics.trackingplot.model.TrackingConfig
+import de.tudarmstadt.physics.trackingplot.tracker.NativeTracker
+import de.tudarmstadt.physics.trackingplot.ui.common.ChartModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.opencv.core.Core
-import org.opencv.core.Mat
-import java.io.File
-import java.util.concurrent.Executors
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
+/**
+ * Runs a stored experiment: configures the tracker from the persisted configuration, records
+ * samples while [isRecording], plots them and persists them in the background.
+ *
+ * The time axis starts at the first recorded frame and keeps running across stop/start, so
+ * samples never overlap. If the experiment already has samples (the process was restarted while
+ * the screen was open), new samples continue after the last stored timestamp.
+ */
 class LiveExperimentViewModel(
     val experimentId: Long,
-    private val trackingSession: TrackingSession,
-    private val nativeTracker: NativeTracker,
-    private val db: ExperimentDatabase
-): ViewModel() {
+    private val db: ExperimentDatabase,
+    appScope: CoroutineScope
+) : ViewModel() {
 
-    val surfaceRequests = MutableStateFlow<SurfaceRequest?>(null)
+    sealed interface LoadState {
+        data object Loading : LoadState
+        data class Failed(val error: Throwable?) : LoadState
+        data class Ready(
+            val config: TrackingConfig,
+            val summary: ExperimentSummary,
+            val chart: ChartModel
+        ) : LoadState
+    }
 
-    var camera: Camera? = null
+    private val _loadState = MutableStateFlow<LoadState>(LoadState.Loading)
+    val loadState: StateFlow<LoadState> = _loadState
 
-    private val _boxes = MutableStateFlow<List<NormalizedBox>>(emptyList())
-    val boxes: StateFlow<List<NormalizedBox>> = _boxes
+    private val tracker = NativeTracker()
 
-    var boundingBoxPoints by mutableStateOf<Pair<Offset, Offset>?>(null)
+    @Volatile
+    private var analysisEnabled = false
+
+    val pipeline = CameraPipeline(tracker) { analysisEnabled }
+
+    private val writer = MeasurementWriter(db, experimentId, appScope)
+
+    /** Set when samples could not be written to the database. */
+    val writerError: StateFlow<Throwable?> = writer.error
+
+    private val _isRecording = MutableStateFlow(false)
+    val isRecording: StateFlow<Boolean> = _isRecording
+
+    private val _trackedObjects = MutableStateFlow<List<TrackedObject>>(emptyList())
+
+    /** Objects found in the most recent frame, whether recording or not. */
+    val trackedObjects: StateFlow<List<TrackedObject>> = _trackedObjects
+
+    private val _elapsedMs = MutableStateFlow(0L)
+
+    /** Time of the last recorded sample, in milliseconds since the experiment start. */
+    val elapsedMs: StateFlow<Long> = _elapsedMs
+
+    private val _sampleCount = MutableStateFlow(0L)
+    val sampleCount: StateFlow<Long> = _sampleCount
+
+    // ---------------------------------------------------------------- chart viewport
+
+    /** 0..1, mapped logarithmically to 1 s .. 6 h; 1 shows the whole experiment. */
+    var timeWindowSlider by mutableFloatStateOf(1f)
         private set
 
+    /** 0..1; 1 follows the newest data ("live"), smaller values look further into the past. */
+    var offsetSlider by mutableFloatStateOf(1f)
+        private set
+
+    fun onTimeWindowSliderChange(value: Float) {
+        timeWindowSlider = value.coerceIn(0f, 1f)
+    }
+
+    fun onOffsetSliderChange(value: Float) {
+        offsetSlider = value.coerceIn(0f, 1f)
+    }
+
+    val timeWindowMs: Long get() = logarithmicTimeWindowMs(timeWindowSlider)
+
+    fun offsetMs(latestTimeMs: Float): Long = ((1f - offsetSlider) * max(latestTimeMs, 0f)).toLong()
+
+    /**
+     * X-axis range to display for the current slider positions, or null to fit everything.
+     */
+    fun axisWindow(latestTimeMs: Float): ClosedFloatingPointRange<Float>? {
+        if (latestTimeMs <= 0f) return null
+        val window = timeWindowMs.toFloat()
+        val end = latestTimeMs - offsetMs(latestTimeMs)
+        if (window >= latestTimeMs && offsetSlider >= 1f) return null
+        val start = max(0f, end - window)
+        return start..max(end, start + 1f)
+    }
+
+    // ---------------------------------------------------------------- recording
+
+    private var chart: ChartModel? = null
+    private var baseTimestampNanos: Long? = null
+    private var timeOffsetMs = 0L
+    private var lastAcceptedNanos = Long.MIN_VALUE
+    private var minIntervalNanos = 0L
+
+    fun startRecording() {
+        if (_loadState.value !is LoadState.Ready) return
+        _isRecording.value = true
+    }
+
+    fun stopRecording() {
+        _isRecording.value = false
+    }
+
+    fun toggleRecording() {
+        if (_isRecording.value) stopRecording() else startRecording()
+    }
+
     init {
-        val config = trackingSession.getConfig()
-        config.roi?.let {
-            boundingBoxPoints =
-                Offset(it.p1.x, it.p1.y) to Offset(it.p2.x, it.p2.y)
+        load()
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            pipeline.frames.collect { onFrame(it) }
         }
-//        boundingBoxPoints =
-//            Offset(0.2f, 0.2f) to Offset(0.8f, 0.8f)
+        viewModelScope.launch {
+            while (isActive) {
+                delay(CHART_REFRESH_MS)
+                chart?.commitIfDirty()
+            }
+        }
+    }
+
+    private fun load() {
+        viewModelScope.launch {
+            try {
+                val loaded = db.read {
+                    val summary = getExperiment(experimentId) ?: return@read null
+                    val config = getTrackingConfig(experimentId) ?: return@read null
+                    Loaded(summary, config, getMeasurements(experimentId), getLastTimestamp(experimentId))
+                }
+                if (loaded == null) {
+                    _loadState.value = LoadState.Failed(null)
+                    return@launch
+                }
+                val chart = ChartModel(RulerScale.from(loaded.config.ruler))
+                loaded.measurements.forEach { (trackerId, samples) ->
+                    samples.forEach { chart.addSample(trackerId, it.timestampMs, it.centroidX, it.centroidY) }
+                }
+                chart.commit()
+
+                timeOffsetMs = loaded.lastTimestampMs?.let { it + 1 } ?: 0L
+                minIntervalNanos = if (loaded.config.samplingRate > 0) {
+                    1_000_000_000L / loaded.config.samplingRate
+                } else 0L
+                _elapsedMs.value = loaded.lastTimestampMs ?: 0L
+                _sampleCount.value = loaded.summary.sampleCount
+
+                configureTracker(loaded.config)
+                this@LiveExperimentViewModel.chart = chart
+                _loadState.value = LoadState.Ready(loaded.config, loaded.summary, chart)
+                analysisEnabled = true
+            } catch (e: DatabaseException) {
+                _loadState.value = LoadState.Failed(e)
+            }
+        }
+    }
+
+    private class Loaded(
+        val summary: ExperimentSummary,
+        val config: TrackingConfig,
+        val measurements: Map<Int, List<MeasurementSample>>,
+        val lastTimestampMs: Long?
+    )
+
+    private fun configureTracker(config: TrackingConfig) {
+        tracker.clear()
+        config.trackers.forEachIndexed { index, trackerConfig ->
+            tracker.setTracker(
+                index,
+                HsvColor.fromArgb(trackerConfig.color),
+                HsvTolerance.fromUiTolerance(trackerConfig.tolerance)
+            )
+        }
+        pipeline.roi = config.roi
+        pipeline.setZoomRatio(config.zoomRatio)
+    }
+
+    /** Called on the main thread for every analysed frame. */
+    private fun onFrame(result: FrameResult) {
+        _trackedObjects.value = result.objects
+        if (!_isRecording.value) return
+        val chart = chart ?: return
+
+        val base = baseTimestampNanos ?: result.timestampNanos.also { baseTimestampNanos = it }
+        val timestamp = result.timestampNanos
+        if (minIntervalNanos > 0 && lastAcceptedNanos != Long.MIN_VALUE &&
+            timestamp - lastAcceptedNanos < minIntervalNanos * 9 / 10
+        ) {
+            return
+        }
+        lastAcceptedNanos = timestamp
+
+        val timeMs = timeOffsetMs + (timestamp - base) / 1_000_000L
+        if (result.objects.isEmpty()) return
+
+        val samples = result.objects.map { obj ->
+            chart.addSample(obj.trackerId, timeMs, obj.centroidX, obj.centroidY)
+            MeasurementSample(obj.trackerId, timeMs, obj.centroidX, obj.centroidY)
+        }
+        writer.submit(samples)
+        _elapsedMs.value = timeMs
+        _sampleCount.value += samples.size
     }
 
     override fun onCleared() {
         super.onCleared()
-        nativeTracker.reset()
-        trackingSession.reset()
+        _isRecording.value = false
+        analysisEnabled = false
+        pipeline.close()
+        tracker.close()
+        writer.close()
     }
 
+    companion object {
+        private const val CHART_REFRESH_MS = 100L
+        const val MIN_TIME_WINDOW_MS = 1_000L
+        const val MAX_TIME_WINDOW_MS = 6L * 60 * 60 * 1_000
 
-    private var videoCapture: VideoCapture<Recorder>? = null
-    private var imageAnalysis: ImageAnalysis? = null
-    private var recording: Recording? = null
-
-    var isRecording by mutableStateOf(trackingSession.isActive())
-        private set
-
-    fun createUseCaseGroup(
-    ): UseCaseGroup {
-        val previewUseCase = createPreviewUseCase()
-
-        return UseCaseGroup.Builder().apply {
-            setViewPort(ViewPort.Builder(
-                Rational(3, 4),
-                previewUseCase.targetRotation
-            ).build())
-            addUseCase(previewUseCase)
-
-            val imageAnalysis = createImageAnalysis()
-            this@LiveExperimentViewModel.imageAnalysis = imageAnalysis
-            addUseCase(imageAnalysis)
-
-            val recorder = Recorder.Builder().apply {
-                //TODO
-            }.build()
-            val videoCapture = VideoCapture.withOutput(recorder)
-            this@LiveExperimentViewModel.videoCapture = videoCapture
-            addUseCase(videoCapture)
-        }.build()
-    }
-
-    private fun createPreviewUseCase(): Preview = Preview.Builder().apply {
-        setResolutionSelector(
-            ResolutionSelector.Builder()
-                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-                .build()
-        )
-    }.build().apply {
-        setSurfaceProvider { surfaceRequest ->
-            surfaceRequests.update { surfaceRequest }
+        fun logarithmicTimeWindowMs(fraction: Float): Long {
+            val f = fraction.coerceIn(0f, 1f).toDouble()
+            val logMin = ln(MIN_TIME_WINDOW_MS.toDouble())
+            val logMax = ln(MAX_TIME_WINDOW_MS.toDouble())
+            return exp(logMin + f * (logMax - logMin)).toLong()
         }
-    }
-
-
-    fun createImageAnalysis(): ImageAnalysis {
-        return ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build().apply {
-                setAnalyzer(
-                    Executors.newSingleThreadExecutor()
-                ) { imageProxy ->
-                    try {
-                        if (trackingSession.isActive()) {
-                            imageProxy.image?.let {
-                                if (it.format == ImageFormat.YUV_420_888 && it.planes.size == 3) {
-                                    val mat = it.yuvToRgba()
-                                    when (imageProxy.imageInfo.rotationDegrees) {
-                                        90 -> Core.rotate(mat, mat, Core.ROTATE_90_CLOCKWISE)
-                                        180 -> Core.rotate(mat, mat, Core.ROTATE_180)
-                                        270 -> Core.rotate(mat, mat, Core.ROTATE_90_COUNTERCLOCKWISE)
-                                    }
-                                    val result = processFrame(mat)
-
-                                    val timestamp = System.currentTimeMillis()
-
-                                    addTrackingResult(timestamp, result)
-                                }
-                            }
-                        }
-                    } catch (e: IllegalStateException) {
-                        e.printStackTrace()
-                    } finally {
-                        imageProxy.close()
-                    }
-                }
-            }
-    }
-
-
-    fun toggleRecording(context: Context) {
-        if (trackingSession.isActive()) {
-            recording?.stop()
-            trackingSession.stop()
-            isRecording = false
-        } else {
-            trackingSession.start()
-            isRecording = true
-            baseTime = System.currentTimeMillis()
-//            startRecording(context)
-        }
-    }
-
-    private fun startRecording(context: Context) {
-        return.also {
-            trackingSession.start()
-            isRecording = true
-        }
-        val file = File(
-            context.filesDir,
-            "video_${System.currentTimeMillis()}.mp4"
-        )
-
-        val outputOptions = FileOutputOptions.Builder(file).build()
-
-        recording = videoCapture?.output
-            ?.prepareRecording(context, outputOptions)
-            ?.start(ContextCompat.getMainExecutor(context)) { event ->
-                if (event is VideoRecordEvent.Start) {
-                    isRecording = true
-                }
-            }
-    }
-
-//    fun createVideoCapture(): VideoCapture {
-//        TODO()
-//    }
-
-    fun normalizedPointsToRect(p1: Offset, p2: Offset, frameWidth: Int, frameHeight: Int): Rect {
-        val np1 = Offset(p1.x, p1.y)
-        val np2 = Offset(p2.x, p2.y)
-
-        // Convert to pixel coordinates
-        val x1 = (np1.x * frameWidth).roundToInt()
-        val y1 = (np1.y * frameHeight).roundToInt()
-        val x2 = (np2.x * frameWidth).roundToInt()
-        val y2 = (np2.y * frameHeight).roundToInt()
-
-        // Ensure left < right, top < bottom
-        val left = min(x1, x2).coerceIn(0, frameWidth - 1)
-        val top = min(y1, y2).coerceIn(0, frameHeight - 1)
-        val right = max(x1, x2).coerceIn(0, frameWidth)
-        val bottom = max(y1, y2).coerceIn(0, frameHeight)
-
-        return Rect(left, top, right, bottom)
-    }
-
-    private fun processFrame(mat: Mat): List<NormalizedBox> {
-        val frameWidth = mat.width()
-        val frameHeight = mat.height()
-
-        val roi = boundingBoxPoints?.let { (point0, point1) ->
-            normalizedPointsToRect(point0, point1, frameWidth, frameHeight)
-        }
-        val results = nativeTracker.updateTrackers(
-            mat.nativeObjAddr, roi
-        )
-
-
-        val normalized = results.mapNotNull { r ->
-
-            if (!r.found) return@mapNotNull null
-
-            val left = r.x.toFloat() / frameWidth
-            val top = r.y.toFloat() / frameHeight
-            val right = (r.x + r.width).toFloat() / frameWidth
-            val bottom = (r.y + r.height).toFloat() / frameHeight
-            val centroidX = r.centroidX / frameWidth
-            val centroidY = r.centroidY / frameWidth
-
-            NormalizedBox(
-                trackerId = r.trackerId,
-                left = left,
-                top = top,
-                right = right,
-                bottom = bottom,
-                centroidX = centroidX,
-                centroidY = centroidY
-            )
-        }
-        return normalized
-    }
-
-
-    /**
-     * TODO TEST
-     */
-    private val _trackingConfig = mutableStateOf<TrackingConfig?>(null)
-    val trackingConfig by _trackingConfig
-    init {
-        //todo load from db
-        _trackingConfig.value = trackingSession.getConfig()
-    }
-
-    private val _disabledLines = mutableStateSetOf<String>()
-    val disabledLines = _disabledLines as Set<String>
-    var baseTime = System.currentTimeMillis()
-    private val _mostRecentTime = mutableStateOf(baseTime)
-    val mostRecentTime by _mostRecentTime
-
-    private val _timeWindowSlider = mutableStateOf(1.0f)
-    val timeWindowSlider by _timeWindowSlider
-    fun onTimeWindowSliderValueChange(value: Float) {
-        _timeWindowSlider.value = value//.coerceIn(0.0f .. 1.0f)
-    }
-    private val _offsetSlider = mutableStateOf(1.0f)
-    val offsetSlider by _offsetSlider
-    fun onOffsetSliderValueChange(value: Float) {
-        _offsetSlider.value = value//.coerceIn(0.0f .. 1.0f)
-    }
-
-    val timeWindowMs by derivedStateOf {
-        logarithmicTimeWindowMs(_timeWindowSlider.value)
-    }
-    val offsetMs by derivedStateOf {
-        (_offsetSlider.value * (_mostRecentTime.value - baseTime).coerceAtLeast(0L)).toLong()
-    }
-    val data = LineData()
-
-    fun addTrackingResult(timestamp: Long, results: List<NormalizedBox>) {
-        val nullTimestamp = timestamp - baseTime
-        val time = (timestamp - baseTime).coerceAtLeast(0L).toFloat()
-        for (result in results) {
-            val color = when (result.trackerId) {
-                0 -> Color.Red
-                1 -> Color.Green
-                2 -> Color.Blue
-                else -> Color.Gray
-            }.toArgb()
-//            val color = Color.Red.toArgb()
-            val labelX = "${result.trackerId}_X"
-            val labelY = "${result.trackerId}_Y"
-            val dataSetX = data.getDataSetByLabel(labelX, true) as? LineDataSet
-                ?: LineDataSet(mutableListOf(), labelX).apply {
-                    setDrawCircles(false)
-                    this.color = color
-                    data.addDataSet(this)
-                }
-            val dataSetY = data.getDataSetByLabel(labelY, true) as? LineDataSet
-                ?: LineDataSet(mutableListOf(), labelY).apply {
-                    setDrawCircles(false)
-                    this.color = color
-                    data.addDataSet(this)
-                }
-
-//            val x = (result.left + result.right) / 2
-//            val y = (result.top + result.bottom) / 2
-            val x = result.centroidX
-            val y = result.centroidY
-            dataSetX.addEntry(Entry(time, x.toFloat()))
-            dataSetY.addEntry(Entry(time, y.toFloat()))
-
-            dataSetX.notifyDataSetChanged()
-            dataSetY.notifyDataSetChanged()
-        }
-        viewModelScope.launch {
-            db.withTransaction(readOnly = false) {
-                addMeasurements(
-                    experimentId,
-                    nullTimestamp,
-                    results
-                )
-            }
-        }
-        data.notifyDataChanged()
-    }
-
-    fun toggleLabel(label: String, visible: Boolean) {
-        val dataSet = data.getDataSetByLabel(label, true) as? LineDataSet
-            ?: LineDataSet(mutableListOf(), label).apply {
-                setDrawCircles(false)
-                this.color = color
-                data.addDataSet(this)
-            }
-
-        dataSet.isVisible = visible
-
-        dataSet.notifyDataSetChanged()
-
-        data.notifyDataChanged()
-    }
-    fun toggleLine(label: String) {
-        val isCurrentlyVisible = !_disabledLines.contains(label)
-
-        val dataSet = data.getDataSetByLabel(label, true) as? LineDataSet
-            ?: return
-//            ?: LineDataSet(mutableListOf(), label).apply {
-//                setDrawCircles(false)
-//                this.color = color
-//                data.addDataSet(this)
-//            }
-
-        if (isCurrentlyVisible) {
-            dataSet.isVisible = false
-            _disabledLines.add(label)
-        } else {
-            dataSet.isVisible = true
-            _disabledLines.remove(label)
-        }
-
-        dataSet.notifyDataSetChanged()
-
-        data.notifyDataChanged()
-    }
-
-    fun logarithmicTimeWindowMs(fraction: Float): Long {
-        val minMs = 1_000L            // 1 second
-        val maxMs = 6 * 60 * 60_000L  // 6 hours
-
-        val logMin = ln(minMs.toDouble())
-        val logMax = ln(maxMs.toDouble())
-
-        return exp(logMin + fraction * (logMax - logMin)).toLong()
     }
 }

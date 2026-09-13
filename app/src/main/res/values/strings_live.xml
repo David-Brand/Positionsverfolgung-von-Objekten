@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Live experiment screen -->
+    <string name="live_load_failed">This experiment could not be loaded.</string>
+
+    <!-- Status row -->
+    <string name="live_status_recording">Recording</string>
+    <string name="live_status_stopped">Not recording</string>
+    <string name="live_elapsed_minutes">%1$d:%2$02d</string>
+    <string name="live_elapsed_hours">%1$d:%2$02d:%3$02d</string>
+    <plurals name="live_sample_count">
+        <item quantity="one">%1$d sample</item>
+        <item quantity="other">%1$d samples</item>
+    </plurals>
+
+    <!-- Actions -->
+    <string name="live_action_start">Start</string>
+    <string name="live_action_stop">Stop</string>
+    <string name="live_action_finish">Finish</string>
+
+    <!-- Warnings and dialogs -->
+    <string name="live_writer_error">Measurements could not be saved: %1$s</string>
+    <string name="live_leave_title">Leave experiment?</string>
+    <string name="live_leave_message">Recording stops; recorded data stays saved.</string>
+    <string name="live_leave_confirm">Leave</string>
+
+    <!-- Panels -->
+    <string name="live_panel_plot">Plot only</string>
+    <string name="live_panel_camera">Camera</string>
+    <string name="live_panel_options">Plot options</string>
+
+    <!-- Plot options -->
+    <string name="live_time_window">Time window: %1$s</string>
+    <string name="live_offset">Offset: %1$s</string>
+    <string name="live_offset_live">Live</string>
+    <string name="live_offset_seconds">-%1$d s</string>
+    <string name="live_duration_seconds">%1$d s</string>
+    <string name="live_duration_minutes">%1$.1f min</string>
+    <string name="live_duration_hours">%1$.1f h</string>
+</resources>

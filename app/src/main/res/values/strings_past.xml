@@ -1,0 +1,35 @@
+<resources>
+    <!-- Shared by the experiments overview and the past experiment screen -->
+    <string name="experiment_title">Experiment #%1$d</string>
+    <string name="experiment_title_described">Experiment #%1$d – %2$s</string>
+    <plurals name="sample_count">
+        <item quantity="one">%1$d sample</item>
+        <item quantity="other">%1$d samples</item>
+    </plurals>
+    <plurals name="tracker_count">
+        <item quantity="one">%1$d tracker</item>
+        <item quantity="other">%1$d trackers</item>
+    </plurals>
+
+    <!-- Experiments overview -->
+    <string name="overview_new_experiment">New experiment</string>
+    <string name="overview_empty">No experiments yet</string>
+    <string name="overview_empty_hint">Tap “New experiment” to calibrate the camera and start tracking.</string>
+    <string name="overview_item_supporting">%1$s · %2$s · %3$s</string>
+    <string name="overview_item_supporting_no_date">%1$s · %2$s</string>
+
+    <!-- Past experiment -->
+    <string name="past_recorded_at">Recorded %1$s</string>
+    <string name="past_stats">%1$s · %2$s · %3$s</string>
+    <string name="past_rate_per_second">%1$d/s</string>
+    <string name="past_rate_every_frame">every frame</string>
+    <string name="past_no_samples">No measurements were recorded in this experiment.</string>
+    <string name="past_not_found">This experiment does not exist any more.</string>
+    <string name="past_export_csv">Export CSV</string>
+    <string name="past_export_done">Exported</string>
+    <string name="past_export_failed">Export failed: %1$s</string>
+    <string name="past_delete">Delete</string>
+    <string name="past_delete_title">Delete experiment?</string>
+    <string name="past_delete_message">Experiment #%1$d and all of its measurements will be deleted permanently.</string>
+    <string name="past_delete_failed">Could not delete the experiment: %1$s</string>
+</resources>

@@ -1,30 +1,39 @@
 package de.tudarmstadt.physics.trackingplot.ui.experiments_overview
 
-import androidx.compose.runtime.mutableStateListOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import de.tudarmstadt.physics.trackingplot.Experiment
+import de.tudarmstadt.physics.trackingplot.db.DatabaseException
 import de.tudarmstadt.physics.trackingplot.db.ExperimentDatabase
+import de.tudarmstadt.physics.trackingplot.model.ExperimentSummary
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class ExperimentsOverviewViewModel(
     private val db: ExperimentDatabase
-): ViewModel() {
+) : ViewModel() {
 
-    private val _experiments = mutableStateListOf<Experiment>()
-    val experiments = _experiments as List<Experiment>
+    private val _experiments = MutableStateFlow<List<ExperimentSummary>?>(null)
+
+    /** Null while loading. */
+    val experiments: StateFlow<List<ExperimentSummary>?> = _experiments
+
+    private val _error = MutableStateFlow<Throwable?>(null)
+    val error: StateFlow<Throwable?> = _error
 
     init {
-        loadExperiments()
+        refresh()
     }
 
-    fun loadExperiments() {
+    fun refresh() {
         viewModelScope.launch {
-            val experiments = db.withTransaction(readOnly = true) {
-                getExperiments()
+            try {
+                _experiments.value = db.read { getExperiments() }
+                _error.value = null
+            } catch (e: DatabaseException) {
+                _error.value = e
+                if (_experiments.value == null) _experiments.value = emptyList()
             }
-            _experiments.clear()
-            _experiments.addAll(experiments)
         }
     }
 }

@@ -1,7 +1,3 @@
 package de.tudarmstadt.physics.trackingplot.db
 
-class DatabaseException: Exception {
-    constructor(cause: Throwable): super(cause)
-
-    constructor(): super()
-}
+class DatabaseException(message: String, cause: Throwable? = null) : Exception(message, cause)

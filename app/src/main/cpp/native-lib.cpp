@@ -1,111 +1,106 @@
+#include <android/log.h>
 #include <jni.h>
 
+#include <opencv2/core.hpp>
+
+#include <exception>
+#include <vector>
 
 #include "TrackerManager.hpp"
 
-static TrackerManager gTrackerManager;
+// JNI bridge for de.tudarmstadt.physics.trackingplot.tracker.NativeTracker.
+//
+// Each NativeTracker instance owns one TrackerManager (identified by an opaque handle), so the
+// setup screen and the live experiment never share tracking state. Results are returned as a
+// flat double array (8 values per tracker: id, found, x, y, width, height, centroidX,
+// centroidY) to avoid per-frame reflection on the Java side.
 
-cv::Scalar rgbToHsv(int r, int g, int b);
+namespace {
 
-extern "C"
-JNIEXPORT jint JNICALL
-Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_addTracker(
-        JNIEnv* env,
-        jobject,
-        jint r, jint g, jint b,
-        jint tolerance) {
+constexpr const char* kLogTag = "native-lib";
+constexpr jsize kValuesPerResult = 8;
 
-    cv::Scalar hsv = rgbToHsv(r, g, b);
-    return gTrackerManager.addTracker(hsv, tolerance);
+TrackerManager* manager(jlong handle) {
+    return reinterpret_cast<TrackerManager*>(handle);
 }
 
-extern "C"
-JNIEXPORT jint JNICALL
-Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_setTracker(
-        JNIEnv* env,
-        jobject,
-        jint index,
-        jint r, jint g, jint b,
-        jint tolerance) {
-
-    cv::Scalar hsv = rgbToHsv(r, g, b);
-    return gTrackerManager.setTracker(index, hsv, tolerance);
+jdoubleArray emptyArray(JNIEnv* env) {
+    return env->NewDoubleArray(0);
 }
 
-extern "C"
-JNIEXPORT jobjectArray JNICALL
-Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_updateTrackers(
-        JNIEnv* env,
-        jobject,
-        jlong matAddr,
-        jint roiX,
-        jint roiY,
-        jint roiWidth,
-        jint roiHeight) {
+}  // namespace
 
-    cv::Mat& frame = *(cv::Mat*)matAddr;
+extern "C" JNIEXPORT jlong JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeCreate(JNIEnv*, jclass) {
+    return reinterpret_cast<jlong>(new TrackerManager());
+}
 
-    std::vector<TrackerResult> results;
+extern "C" JNIEXPORT void JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeDestroy(JNIEnv*, jclass, jlong handle) {
+    delete manager(handle);
+}
 
-    if (roiWidth > 0 && roiHeight > 0) {
-        cv::Rect roi(roiX, roiY, roiWidth, roiHeight);
-        results = gTrackerManager.updateAll(frame, &roi);
-    } else {
-        results = gTrackerManager.updateAll(frame, nullptr);
+extern "C" JNIEXPORT void JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeSetTracker(
+        JNIEnv*, jclass, jlong handle, jint id,
+        jint h, jint s, jint v,
+        jint hueTolerance, jint satTolerance, jint valTolerance) {
+    if (handle == 0) return;
+    manager(handle)->setTracker(id, HsvColor{h, s, v}, HsvTolerance{hueTolerance, satTolerance, valTolerance});
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeRemoveTracker(
+        JNIEnv*, jclass, jlong handle, jint id) {
+    if (handle == 0) return JNI_FALSE;
+    return manager(handle)->removeTracker(id) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeClear(JNIEnv*, jclass, jlong handle) {
+    if (handle == 0) return;
+    manager(handle)->clear();
+}
+
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_de_tudarmstadt_physics_trackingplot_tracker_NativeTracker_nativeUpdate(
+        JNIEnv* env, jclass, jlong handle, jlong matAddr,
+        jint roiX, jint roiY, jint roiWidth, jint roiHeight) {
+    if (handle == 0 || matAddr == 0) {
+        return emptyArray(env);
     }
+    try {
+        const cv::Mat& frame = *reinterpret_cast<cv::Mat*>(matAddr);
+        const cv::Rect roi(roiX, roiY, roiWidth, roiHeight);
+        const cv::Rect* roiPtr = (roiWidth > 0 && roiHeight > 0) ? &roi : nullptr;
 
-    jclass resultClass = env->FindClass("de/tudarmstadt/physics/trackingplot/tracker/TrackerResult");
-    jobjectArray array = env->NewObjectArray(
-            results.size(),
-            resultClass,
-            nullptr
-    );
+        const std::vector<TrackerResult> results = manager(handle)->updateAll(frame, roiPtr);
 
-    jmethodID constructor = env->GetMethodID(
-            resultClass,
-            "<init>",
-            "(IZIIIIDD)V"
-    );
+        std::vector<jdouble> flat;
+        flat.reserve(results.size() * kValuesPerResult);
+        for (const TrackerResult& r : results) {
+            flat.push_back(static_cast<jdouble>(r.trackerId));
+            flat.push_back(r.found ? 1.0 : 0.0);
+            flat.push_back(r.found ? static_cast<jdouble>(r.boundingBox.x) : 0.0);
+            flat.push_back(r.found ? static_cast<jdouble>(r.boundingBox.y) : 0.0);
+            flat.push_back(r.found ? static_cast<jdouble>(r.boundingBox.width) : 0.0);
+            flat.push_back(r.found ? static_cast<jdouble>(r.boundingBox.height) : 0.0);
+            flat.push_back(r.found ? r.centroid.x : 0.0);
+            flat.push_back(r.found ? r.centroid.y : 0.0);
+        }
 
-    for (size_t i = 0; i < results.size(); i++) {
-        const auto& r = results[i];
-
-        jobject obj = env->NewObject(
-                resultClass,
-                constructor,
-                r.trackerId,
-                r.boundingBoxAndCentroid.has_value(),
-                r.boundingBoxAndCentroid->first.x,
-                r.boundingBoxAndCentroid->first.y,
-                r.boundingBoxAndCentroid->first.width,
-                r.boundingBoxAndCentroid->first.height,
-                r.boundingBoxAndCentroid->second.x,
-                r.boundingBoxAndCentroid->second.y
-        );
-
-        env->SetObjectArrayElement(array, i, obj);
+        jdoubleArray array = env->NewDoubleArray(static_cast<jsize>(flat.size()));
+        if (array == nullptr) {
+            return nullptr;  // OutOfMemoryError is pending on the Java side
+        }
+        if (!flat.empty()) {
+            env->SetDoubleArrayRegion(array, 0, static_cast<jsize>(flat.size()), flat.data());
+        }
+        return array;
+    } catch (const cv::Exception& e) {
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag, "OpenCV error while tracking: %s", e.what());
+    } catch (const std::exception& e) {
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Error while tracking: %s", e.what());
     }
-
-    return array;
-}
-
-cv::Scalar rgbToHsv(int r, int g, int b) {
-
-    cv::Mat bgr(1, 1, CV_8UC3, cv::Scalar(b, g, r));
-    cv::Mat hsv;
-
-    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
-
-    cv::Vec3b pixel = hsv.at<cv::Vec3b>(0, 0);
-
-    return cv::Scalar(pixel[0], pixel[1], pixel[2]);
-}
-
-
-extern "C"
-JNIEXPORT void JNICALL
-Java_de_tudarmstadt_physics_trackingplot_tracker2_NativeTracker_reset(
-        JNIEnv* env,
-        jobject) {
-    gTrackerManager.reset();
+    return emptyArray(env);
 }

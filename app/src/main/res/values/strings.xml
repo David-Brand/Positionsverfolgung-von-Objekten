@@ -1,5 +1,28 @@
 <resources>
     <string name="app_name">TrackingPlot</string>
 
-    <string name="abort_experiment">Abort Experiment?</string>
+    <!-- Shared -->
+    <string name="action_back">Back</string>
+    <string name="action_next">Next</string>
+    <string name="action_skip">Skip</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_ok">OK</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_reset_points">Reset points</string>
+    <string name="loading">Loading…</string>
+    <string name="error_generic">Something went wrong: %1$s</string>
+
+    <!-- Camera permission -->
+    <string name="camera_permission_title">Camera access needed</string>
+    <string name="camera_permission_message">TrackingPlot tracks coloured objects with the camera. Without camera access no experiment can be set up or recorded.</string>
+    <string name="camera_permission_grant">Allow camera access</string>
+    <string name="camera_permission_open_settings">Open app settings</string>
+
+    <!-- Camera -->
+    <string name="camera_bind_failed">The camera could not be started: %1$s</string>
+    <string name="camera_zoom">Zoom %1$.1f×</string>
+
+    <!-- Native libraries -->
+    <string name="native_library_error_title">TrackingPlot cannot start</string>
+    <string name="native_library_error_message">The native tracking library could not be loaded on this device. Please report this together with the message below.</string>
 </resources>

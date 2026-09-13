@@ -5,10 +5,10 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.dropUnlessStarted
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
@@ -16,7 +16,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import de.tudarmstadt.physics.trackingplot.TrackingPlotApp
 import de.tudarmstadt.physics.trackingplot.db.ExperimentDatabase
-import de.tudarmstadt.physics.trackingplot.tracker2.NativeTracker
+import de.tudarmstadt.physics.trackingplot.ui.common.CameraPermissionGate
 import de.tudarmstadt.physics.trackingplot.ui.experiments_overview.ExperimentsOverviewScreen
 import de.tudarmstadt.physics.trackingplot.ui.experiments_overview.ExperimentsOverviewViewModel
 import de.tudarmstadt.physics.trackingplot.ui.live_experiment.LiveExperimentScreen
@@ -29,11 +29,20 @@ import de.tudarmstadt.physics.trackingplot.ui.setup.ruler.RulerSetupScreen
 import de.tudarmstadt.physics.trackingplot.ui.setup.tracker.TrackerSetupScreen
 import kotlinx.serialization.Serializable
 
+@Serializable object ExperimentsOverviewRoute
+@Serializable object SetupRoute
+@Serializable object RulerSetupRoute
+@Serializable object BoundingBoxSetupRoute
+@Serializable object TrackerSetupRoute
+@Serializable data class LiveExperimentRoute(val experimentId: Long)
+@Serializable data class PastExperimentRoute(val experimentId: Long)
+
 @Composable
 fun Navigation() {
     val navController = rememberNavController()
-
     val context = LocalContext.current
+    val db = remember { ExperimentDatabase.getInstance(context) }
+    val app = remember { TrackingPlotApp.from(context) }
 
     NavHost(
         navController = navController,
@@ -42,135 +51,94 @@ fun Navigation() {
         exitTransition = { ExitTransition.None }
     ) {
         composable<ExperimentsOverviewRoute> {
-            val lifecycleOwner = LocalLifecycleOwner.current
             ExperimentsOverviewScreen(
                 toSetup = dropUnlessStarted { navController.navigate(SetupRoute) },
                 toPastExperiment = { experimentId ->
-                    //explicit (and equal) version of dropUnlessStarted
-                    if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                        navController.navigate(PastExperimentRoute(experimentId))
-                    }
+                    navController.navigateIfStarted(it, PastExperimentRoute(experimentId))
                 },
-                viewModel = viewModel(
-                    factory = viewModelFactory {
-                        ExperimentsOverviewViewModel(
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
-                )
+                viewModel = viewModel(factory = viewModelFactory { ExperimentsOverviewViewModel(db) })
             )
         }
 
         navigation<SetupRoute>(startDestination = RulerSetupRoute) {
             composable<RulerSetupRoute> { entry ->
-                val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(
-                    viewModelStoreOwner = parentEntry,
-                    factory = viewModelFactory {
-                        SetupViewModel(
-                            nativeTracker = NativeTracker(),
-                            trackingSession = TrackingPlotApp.trackingModule.trackingSession,
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
-                )
-                RulerSetupScreen(
-                    toNextStep = dropUnlessStarted {
-                        navController.navigate(BoundingBoxSetupRoute)
-                    },
-                    setupViewModel = setupViewModel
-                )
+                CameraPermissionGate {
+                    RulerSetupScreen(
+                        toNextStep = dropUnlessStarted { navController.navigate(BoundingBoxSetupRoute) },
+                        setupViewModel = navController.setupViewModel(entry, db)
+                    )
+                }
             }
             composable<BoundingBoxSetupRoute> { entry ->
-                val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(
-                    viewModelStoreOwner = parentEntry,
-                    factory = viewModelFactory {
-                        SetupViewModel(
-                            nativeTracker = NativeTracker(),
-                            trackingSession = TrackingPlotApp.trackingModule.trackingSession,
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
-                )
-                BoundingBoxSetupScreen(
-                    back = dropUnlessStarted { navController.navigateUp() },
-                    toNextStep = dropUnlessStarted {
-                        navController.navigate(TrackerSetupRoute)
-                    },
-                    skip = {},
-                    setupViewModel = setupViewModel
-                )
+                CameraPermissionGate {
+                    BoundingBoxSetupScreen(
+                        back = dropUnlessStarted { navController.navigateUp() },
+                        toNextStep = dropUnlessStarted { navController.navigate(TrackerSetupRoute) },
+                        setupViewModel = navController.setupViewModel(entry, db)
+                    )
+                }
             }
             composable<TrackerSetupRoute> { entry ->
-                val parentEntry = remember(entry) { navController.getBackStackEntry(RulerSetupRoute) }
-                val setupViewModel = viewModel<SetupViewModel>(
-                    viewModelStoreOwner = parentEntry,
-                    factory = viewModelFactory {
-                        SetupViewModel(
-                            nativeTracker = NativeTracker(),
-                            trackingSession = TrackingPlotApp.trackingModule.trackingSession,
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
-                )
-                val lifecycleOwner = LocalLifecycleOwner.current
-                TrackerSetupScreen(
-                    back = dropUnlessStarted { navController.navigateUp() },
-                    toLiveExperiment = { experimentId ->
-                        //explicit (and equal) version of dropUnlessStarted
-                        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-                            navController.navigate(LiveExperimentRoute(experimentId)) {
-                                popUpTo(SetupRoute) {
-                                    inclusive = true
+                CameraPermissionGate {
+                    TrackerSetupScreen(
+                        back = dropUnlessStarted { navController.navigateUp() },
+                        toLiveExperiment = { experimentId ->
+                            if (entry.isStarted()) {
+                                navController.navigate(LiveExperimentRoute(experimentId)) {
+                                    popUpTo<SetupRoute> { inclusive = true }
                                 }
                             }
-                        }
-                    },
-                    setupViewModel = setupViewModel
-                )
+                        },
+                        setupViewModel = navController.setupViewModel(entry, db)
+                    )
+                }
             }
         }
 
         composable<LiveExperimentRoute> { entry ->
             val experimentId = entry.toRoute<LiveExperimentRoute>().experimentId
-            LiveExperimentScreen(
-                onAbortExperiment = dropUnlessStarted { navController.navigateUp() },
-                viewModel = viewModel(
-                    factory = viewModelFactory {
-                        LiveExperimentViewModel(
-                            experimentId = experimentId,
-                            trackingSession = TrackingPlotApp.trackingModule.trackingSession,
-                            nativeTracker = NativeTracker(),
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
+            CameraPermissionGate {
+                LiveExperimentScreen(
+                    onLeave = dropUnlessStarted { navController.popBackStack() },
+                    onShowResults = {
+                        if (entry.isStarted()) {
+                            navController.navigate(PastExperimentRoute(experimentId)) {
+                                popUpTo<LiveExperimentRoute> { inclusive = true }
+                            }
+                        }
+                    },
+                    viewModel = viewModel(
+                        factory = viewModelFactory {
+                            LiveExperimentViewModel(experimentId, db, app.appScope)
+                        }
+                    )
                 )
-            )
+            }
         }
 
         composable<PastExperimentRoute> { entry ->
             val experimentId = entry.toRoute<PastExperimentRoute>().experimentId
             PastExperimentScreen(
-                viewModel = viewModel(
-                    factory = viewModelFactory {
-                        PastExperimentViewModel(
-                            experimentId = experimentId,
-                            db = ExperimentDatabase.getInstance(context)
-                        )
-                    }
-                ),
-                onDelete = dropUnlessStarted { navController.navigateUp() }
+                viewModel = viewModel(factory = viewModelFactory { PastExperimentViewModel(experimentId, db) }),
+                onBack = dropUnlessStarted { navController.popBackStack() }
             )
         }
     }
 }
 
-@Serializable object ExperimentsOverviewRoute
-@Serializable object SetupRoute
-@Serializable object RulerSetupRoute
-@Serializable object BoundingBoxSetupRoute
-@Serializable object TrackerSetupRoute
-//@Serializable object LiveExperimentRoute
-@Serializable class LiveExperimentRoute(val experimentId: Long)
-@Serializable class PastExperimentRoute(val experimentId: Long)
+/** The [SetupViewModel] shared by all screens of the setup graph. */
+@Composable
+private fun NavHostController.setupViewModel(entry: NavBackStackEntry, db: ExperimentDatabase): SetupViewModel {
+    val graphEntry = remember(entry) { getBackStackEntry<SetupRoute>() }
+    return viewModel(
+        viewModelStoreOwner = graphEntry,
+        factory = viewModelFactory { SetupViewModel(db) }
+    )
+}
+
+private fun NavBackStackEntry.isStarted(): Boolean =
+    lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+
+private fun NavHostController.navigateIfStarted(entry: NavBackStackEntry, route: Any) {
+    if (entry.isStarted()) navigate(route)
+}
