@@ -1,0 +1,32 @@
+name: Check Branch Name
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  check-branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name
+        run: |
+          BRANCH_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+          
+          REGEX="^(feat|fix|docs|refactor|perf|test)\/[a-z0-9-]+$"
+
+          echo "Checking branch name: $BRANCH_NAME"
+
+          if [[ ! "$BRANCH_NAME" =~ $REGEX ]]; then
+            echo "--------------------------------------------------------"
+            echo "ERROR: Branch name '$BRANCH_NAME' is invalid!"
+            echo "Expected format: type/short-description"
+            echo "Allowed prefixes: feat/, fix/, docs/, refactor/, perf/, test/"
+            echo "Example: docs/added-ar-bilboard-explanation"
+            echo "--------------------------------------------------------"
+            exit 1
+          else
+            echo "Branch name is valid!"
+          fi
